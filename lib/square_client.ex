@@ -1,64 +1,45 @@
 defmodule SquareClient do
   @moduledoc """
-  Async payment processing client using RabbitMQ message queuing.
+  Direct Square API client library for Elixir applications.
 
   ## Overview
 
-  SquareClient provides async payment processing through a centralized payment service.
-  Instead of direct Square API calls, this library:
-
-  1. Publishes payment requests to RabbitMQ via HTTP
-  2. Payment service processes with Square API
-  3. Returns results via webhook callbacks
+  SquareClient provides direct integration with Square's REST API for:
+  - Payment processing
+  - Subscription management
+  - Customer management
+  - Catalog operations
 
   ## Architecture
 
-      Your App → RabbitMQ → Payment Service → Square API
-          ↑                         ↓
-          ←── Webhook Callback ─────┘
+      Your App → SquareClient → Square API
 
   ## Key Features
 
-  - **Async operations** - All operations return immediately with correlation IDs
-  - **No Square credentials needed** - Centralized in payment service
-  - **Automatic retry** - Payment service handles failures
-  - **Multi-app support** - Each app tracked by app_id
-  - **Simple integration** - No AMQP/Broadway dependencies
-  """
+  - **Direct API integration** - No proxy service or message queue required
+  - **Synchronous operations** - Immediate feedback for payment processing
+  - **Environment-aware** - Automatic sandbox/production switching
+  - **Flexible configuration** - Application config, environment variables, or defaults
+  - **Comprehensive catalog management** - Base plans with pricing variations
 
-  alias SquareClient.Config
+  ## Configuration
+
+  Configure in your app's config files:
+
+      config :square_client,
+        api_url: "https://connect.squareupsandbox.com/v2",
+        access_token: System.get_env("SQUARE_ACCESS_TOKEN")
+
+  Or use environment variables:
+  - `SQUARE_ACCESS_TOKEN` - Your Square API access token
+  - `SQUARE_ENVIRONMENT` - "production" or "sandbox" (default)
+  - `SQUARE_LOCATION_ID` - Your Square location ID
+  """
 
   @doc """
-  Configure the payment service client.
-
-  ## Options
-
-    * `:rabbitmq_url` - RabbitMQ management API URL (required)
-    * `:app_id` - Your application identifier (required, e.g., "contacts4us")
-    * `:callback_url` - URL where payment service sends responses (required)
-    * `:queue_name` - RabbitMQ queue name (defaults to "payments")
-    * `:exchange` - RabbitMQ exchange (defaults to "payments")
-    * `:rabbitmq_username` - RabbitMQ username (defaults to "guest")
-    * `:rabbitmq_password` - RabbitMQ password (defaults to "guest")
-
-  ## Examples
-
-      SquareClient.configure(
-        rabbitmq_url: "http://localhost:15672",
-        app_id: "contacts4us",
-        callback_url: "https://contacts4us.com/webhooks/payments",
-        rabbitmq_username: System.get_env("RABBITMQ_USERNAME"),
-        rabbitmq_password: System.get_env("RABBITMQ_PASSWORD")
-      )
+  Returns the current library version.
   """
-  def configure(opts) do
-    Config.configure(opts)
-  end
-
-  @doc """
-  Get current configuration.
-  """
-  def config do
-    Config.get()
+  def version do
+    "0.1.0"
   end
 end
