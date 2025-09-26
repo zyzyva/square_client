@@ -28,7 +28,6 @@ defmodule SquareClient.MixProject do
   defp deps do
     [
       {:req, "~> 0.5"},
-      {:jason, "~> 1.4"},
       {:ecto, "~> 3.13", optional: true},
       {:ex_doc, "~> 0.35", only: :dev, runtime: false},
       {:mox, "~> 1.1", only: :test},

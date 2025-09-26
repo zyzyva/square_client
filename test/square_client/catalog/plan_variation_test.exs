@@ -126,7 +126,7 @@ defmodule SquareClient.Catalog.PlanVariationTest do
     end
   end
 
-  describe "Jason.Encoder" do
+  describe "JSON.Encoder" do
     test "encodes to JSON properly" do
       variation = %PlanVariation{
         base_plan_id: "PLAN123",
@@ -136,8 +136,8 @@ defmodule SquareClient.Catalog.PlanVariationTest do
         currency: "USD"
       }
 
-      json = Jason.encode!(variation)
-      decoded = Jason.decode!(json)
+      json = JSON.encode!(variation)
+      decoded = JSON.decode!(json)
 
       assert decoded == %{
                "base_plan_id" => "PLAN123",

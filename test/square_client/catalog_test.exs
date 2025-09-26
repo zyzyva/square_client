@@ -7,15 +7,18 @@ defmodule SquareClient.CatalogTest do
   setup do
     bypass = Bypass.open()
 
-    # Configure test environment
-    System.put_env("SQUARE_ENVIRONMENT", "test")
-    System.put_env("SQUARE_API_TEST_URL", "http://localhost:#{bypass.port}/v2")
-    System.put_env("SQUARE_ACCESS_TOKEN", "test_token")
+    # Configure Square client for testing
+    original_config = Application.get_all_env(:square_client)
+
+    Application.put_env(:square_client, :api_url, "http://localhost:#{bypass.port}/v2")
+    Application.put_env(:square_client, :access_token, "test_token")
+    Application.put_env(:square_client, :disable_retries, true)
 
     on_exit(fn ->
-      System.delete_env("SQUARE_ENVIRONMENT")
-      System.delete_env("SQUARE_API_TEST_URL")
-      System.delete_env("SQUARE_ACCESS_TOKEN")
+      # Restore original configuration
+      Enum.each(original_config, fn {key, value} ->
+        Application.put_env(:square_client, key, value)
+      end)
     end)
 
     {:ok, bypass: bypass}
@@ -29,7 +32,7 @@ defmodule SquareClient.CatalogTest do
 
       Bypass.expect_once(bypass, "POST", "/v2/catalog/object", fn conn ->
         {:ok, body, conn} = Plug.Conn.read_body(conn)
-        request = Jason.decode!(body)
+        request = JSON.decode!(body)
 
         # Verify request structure
         assert request["object"]["type"] == "SUBSCRIPTION_PLAN"
@@ -50,7 +53,7 @@ defmodule SquareClient.CatalogTest do
 
         conn
         |> Plug.Conn.put_resp_content_type("application/json")
-        |> Plug.Conn.resp(200, Jason.encode!(response))
+        |> Plug.Conn.resp(200, JSON.encode!(response))
       end)
 
       _log =
@@ -77,7 +80,7 @@ defmodule SquareClient.CatalogTest do
 
       Bypass.expect_once(bypass, "POST", "/v2/catalog/object", fn conn ->
         {:ok, body, conn} = Plug.Conn.read_body(conn)
-        request = Jason.decode!(body)
+        request = JSON.decode!(body)
 
         # Verify description is not included when not provided
         assert request["object"]["subscription_plan_data"]["name"] == plan_name
@@ -95,7 +98,7 @@ defmodule SquareClient.CatalogTest do
 
         conn
         |> Plug.Conn.put_resp_content_type("application/json")
-        |> Plug.Conn.resp(200, Jason.encode!(response))
+        |> Plug.Conn.resp(200, JSON.encode!(response))
       end)
 
       _log =
@@ -124,7 +127,7 @@ defmodule SquareClient.CatalogTest do
 
         conn
         |> Plug.Conn.put_resp_content_type("application/json")
-        |> Plug.Conn.resp(400, Jason.encode!(error_response))
+        |> Plug.Conn.resp(400, JSON.encode!(error_response))
       end)
 
       _log =
@@ -150,7 +153,7 @@ defmodule SquareClient.CatalogTest do
 
       Bypass.expect_once(bypass, "POST", "/v2/catalog/object", fn conn ->
         {:ok, body, conn} = Plug.Conn.read_body(conn)
-        request = Jason.decode!(body)
+        request = JSON.decode!(body)
 
         # Verify variation structure
         assert request["object"]["type"] == "SUBSCRIPTION_PLAN_VARIATION"
@@ -192,7 +195,7 @@ defmodule SquareClient.CatalogTest do
 
         conn
         |> Plug.Conn.put_resp_content_type("application/json")
-        |> Plug.Conn.resp(200, Jason.encode!(response))
+        |> Plug.Conn.resp(200, JSON.encode!(response))
       end)
 
       _log =
@@ -223,7 +226,7 @@ defmodule SquareClient.CatalogTest do
 
       Bypass.expect_once(bypass, "POST", "/v2/catalog/object", fn conn ->
         {:ok, body, conn} = Plug.Conn.read_body(conn)
-        request = Jason.decode!(body)
+        request = JSON.decode!(body)
 
         [phase] = request["object"]["subscription_plan_variation_data"]["phases"]
         assert phase["cadence"] == "ANNUAL"
@@ -254,7 +257,7 @@ defmodule SquareClient.CatalogTest do
 
         conn
         |> Plug.Conn.put_resp_content_type("application/json")
-        |> Plug.Conn.resp(200, Jason.encode!(response))
+        |> Plug.Conn.resp(200, JSON.encode!(response))
       end)
 
       _log =
@@ -305,7 +308,7 @@ defmodule SquareClient.CatalogTest do
 
         conn
         |> Plug.Conn.put_resp_content_type("application/json")
-        |> Plug.Conn.resp(200, Jason.encode!(response))
+        |> Plug.Conn.resp(200, JSON.encode!(response))
       end)
 
       {:ok, plans} = Catalog.list_subscription_plans()
@@ -325,7 +328,7 @@ defmodule SquareClient.CatalogTest do
 
         conn
         |> Plug.Conn.put_resp_content_type("application/json")
-        |> Plug.Conn.resp(200, Jason.encode!(response))
+        |> Plug.Conn.resp(200, JSON.encode!(response))
       end)
 
       {:ok, plans} = Catalog.list_subscription_plans()
@@ -365,7 +368,7 @@ defmodule SquareClient.CatalogTest do
 
         conn
         |> Plug.Conn.put_resp_content_type("application/json")
-        |> Plug.Conn.resp(200, Jason.encode!(response))
+        |> Plug.Conn.resp(200, JSON.encode!(response))
       end)
 
       {:ok, variations} = Catalog.list_plan_variations()
@@ -394,7 +397,7 @@ defmodule SquareClient.CatalogTest do
 
         conn
         |> Plug.Conn.put_resp_content_type("application/json")
-        |> Plug.Conn.resp(200, Jason.encode!(response))
+        |> Plug.Conn.resp(200, JSON.encode!(response))
       end)
 
       {:ok, object} = Catalog.get(object_id)
@@ -409,7 +412,7 @@ defmodule SquareClient.CatalogTest do
       Bypass.expect_once(bypass, "GET", "/v2/catalog/object/#{object_id}", fn conn ->
         conn
         |> Plug.Conn.put_resp_content_type("application/json")
-        |> Plug.Conn.resp(404, Jason.encode!(%{"errors" => [%{"code" => "NOT_FOUND"}]}))
+        |> Plug.Conn.resp(404, JSON.encode!(%{"errors" => [%{"code" => "NOT_FOUND"}]}))
       end)
 
       {:error, :not_found} = Catalog.get(object_id)
@@ -423,12 +426,12 @@ defmodule SquareClient.CatalogTest do
       Bypass.expect_once(bypass, "DELETE", "/v2/catalog/object/#{object_id}", fn conn ->
         conn
         |> Plug.Conn.put_resp_content_type("application/json")
-        |> Plug.Conn.resp(200, Jason.encode!(%{}))
+        |> Plug.Conn.resp(200, JSON.encode!(%{}))
       end)
 
       _log =
         capture_log(fn ->
-          assert :ok = Catalog.delete(object_id)
+          assert {:ok, :deleted} = Catalog.delete(object_id)
         end)
     end
 
@@ -448,7 +451,7 @@ defmodule SquareClient.CatalogTest do
 
         conn
         |> Plug.Conn.put_resp_content_type("application/json")
-        |> Plug.Conn.resp(400, Jason.encode!(error_response))
+        |> Plug.Conn.resp(400, JSON.encode!(error_response))
       end)
 
       _log =

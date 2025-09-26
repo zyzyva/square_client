@@ -23,13 +23,19 @@ defmodule SquareClient.Catalog do
 
   # Get API URL from config or environment
   defp api_url do
-    # First check Application config, then fall back to env vars
-    Application.get_env(:square_client, :api_url) ||
-      case System.get_env("SQUARE_ENVIRONMENT", "sandbox") do
-        "production" -> "https://connect.squareup.com/v2"
-        "test" -> System.get_env("SQUARE_API_TEST_URL", "http://localhost:4001/v2")
-        _ -> "https://connect.squareupsandbox.com/v2"
-      end
+    case Application.get_env(:square_client, :api_url) do
+      nil ->
+        # Only fall back to environment variables if not explicitly set to nil
+        # This prevents tests from accidentally using real APIs
+        case System.get_env("SQUARE_ENVIRONMENT") do
+          "test" -> raise "Square API URL must be configured in test environment"
+          "production" -> "https://connect.squareup.com/v2"
+          _ -> "https://connect.squareupsandbox.com/v2"
+        end
+
+      url ->
+        url
+    end
   end
 
   defp access_token do
@@ -218,6 +224,9 @@ defmodule SquareClient.Catalog do
     |> handle_delete_response(object_id)
   end
 
+  # Alias for consistency with Square API naming
+  def delete_catalog_object(object_id), do: delete(object_id)
+
   defp generate_idempotency_key do
     :crypto.strong_rand_bytes(16)
     |> Base.encode16(case: :lower)
@@ -312,9 +321,9 @@ defmodule SquareClient.Catalog do
 
     formatted_plans =
       Enum.map(plans, fn %{
-                            "id" => id,
-                            "subscription_plan_data" => plan_data
-                          } ->
+                           "id" => id,
+                           "subscription_plan_data" => plan_data
+                         } ->
         %{
           id: id,
           name: plan_data["name"],
@@ -342,13 +351,13 @@ defmodule SquareClient.Catalog do
 
     formatted_variations =
       Enum.map(variations, fn %{
-                                 "id" => variation_id,
-                                 "subscription_plan_variation_data" => %{
-                                   "subscription_plan_id" => base_plan_id,
-                                   "name" => name,
-                                   "phases" => phases
-                                 }
-                               } ->
+                                "id" => variation_id,
+                                "subscription_plan_variation_data" => %{
+                                  "subscription_plan_id" => base_plan_id,
+                                  "name" => name,
+                                  "phases" => phases
+                                }
+                              } ->
         %{
           variation_id: variation_id,
           base_plan_id: base_plan_id,
@@ -394,7 +403,11 @@ defmodule SquareClient.Catalog do
   defp handle_delete_response({:ok, %{status: status}}, object_id)
        when is_success(status) do
     Logger.info("Deleted catalog object: #{object_id}")
-    :ok
+    {:ok, :deleted}
+  end
+
+  defp handle_delete_response({:ok, %{status: 404}}, _object_id) do
+    {:error, :not_found}
   end
 
   defp handle_delete_response({:ok, %{status: status, body: body}}, _object_id) do

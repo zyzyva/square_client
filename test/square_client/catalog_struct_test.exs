@@ -8,15 +8,18 @@ defmodule SquareClient.CatalogStructTest do
   setup do
     bypass = Bypass.open()
 
-    # Configure test environment
-    System.put_env("SQUARE_ENVIRONMENT", "test")
-    System.put_env("SQUARE_API_TEST_URL", "http://localhost:#{bypass.port}/v2")
-    System.put_env("SQUARE_ACCESS_TOKEN", "test_token")
+    # Configure Square client for testing
+    original_config = Application.get_all_env(:square_client)
+
+    Application.put_env(:square_client, :api_url, "http://localhost:#{bypass.port}/v2")
+    Application.put_env(:square_client, :access_token, "test_token")
+    Application.put_env(:square_client, :disable_retries, true)
 
     on_exit(fn ->
-      System.delete_env("SQUARE_ENVIRONMENT")
-      System.delete_env("SQUARE_API_TEST_URL")
-      System.delete_env("SQUARE_ACCESS_TOKEN")
+      # Restore original configuration
+      Enum.each(original_config, fn {key, value} ->
+        Application.put_env(:square_client, key, value)
+      end)
     end)
 
     {:ok, bypass: bypass}
@@ -32,7 +35,7 @@ defmodule SquareClient.CatalogStructTest do
 
       Bypass.expect_once(bypass, "POST", "/v2/catalog/object", fn conn ->
         {:ok, body, conn} = Plug.Conn.read_body(conn)
-        request = Jason.decode!(body)
+        request = JSON.decode!(body)
 
         # Verify the struct was properly converted
         assert request["object"]["type"] == "SUBSCRIPTION_PLAN"
@@ -53,7 +56,7 @@ defmodule SquareClient.CatalogStructTest do
 
         conn
         |> Plug.Conn.put_resp_content_type("application/json")
-        |> Plug.Conn.resp(200, Jason.encode!(response))
+        |> Plug.Conn.resp(200, JSON.encode!(response))
       end)
 
       _log =
@@ -71,7 +74,7 @@ defmodule SquareClient.CatalogStructTest do
     test "accepts plain map and converts to struct", %{bypass: bypass} do
       Bypass.expect_once(bypass, "POST", "/v2/catalog/object", fn conn ->
         {:ok, body, conn} = Plug.Conn.read_body(conn)
-        request = Jason.decode!(body)
+        request = JSON.decode!(body)
 
         assert request["object"]["type"] == "SUBSCRIPTION_PLAN"
         assert request["object"]["subscription_plan_data"]["name"] == "Map Plan"
@@ -88,7 +91,7 @@ defmodule SquareClient.CatalogStructTest do
 
         conn
         |> Plug.Conn.put_resp_content_type("application/json")
-        |> Plug.Conn.resp(200, Jason.encode!(response))
+        |> Plug.Conn.resp(200, JSON.encode!(response))
       end)
 
       _log =
@@ -115,7 +118,7 @@ defmodule SquareClient.CatalogStructTest do
 
       Bypass.expect_once(bypass, "POST", "/v2/catalog/object", fn conn ->
         {:ok, body, conn} = Plug.Conn.read_body(conn)
-        request = Jason.decode!(body)
+        request = JSON.decode!(body)
 
         # Verify the struct was properly converted
         assert request["object"]["type"] == "SUBSCRIPTION_PLAN_VARIATION"
@@ -144,7 +147,7 @@ defmodule SquareClient.CatalogStructTest do
 
         conn
         |> Plug.Conn.put_resp_content_type("application/json")
-        |> Plug.Conn.resp(200, Jason.encode!(response))
+        |> Plug.Conn.resp(200, JSON.encode!(response))
       end)
 
       _log =
@@ -162,7 +165,7 @@ defmodule SquareClient.CatalogStructTest do
     test "accepts plain map and converts to struct", %{bypass: bypass} do
       Bypass.expect_once(bypass, "POST", "/v2/catalog/object", fn conn ->
         {:ok, body, conn} = Plug.Conn.read_body(conn)
-        request = Jason.decode!(body)
+        request = JSON.decode!(body)
 
         variation_data = request["object"]["subscription_plan_variation_data"]
         assert variation_data["name"] == "Annual Map"
@@ -183,7 +186,7 @@ defmodule SquareClient.CatalogStructTest do
 
         conn
         |> Plug.Conn.put_resp_content_type("application/json")
-        |> Plug.Conn.resp(200, Jason.encode!(response))
+        |> Plug.Conn.resp(200, JSON.encode!(response))
       end)
 
       _log =
@@ -206,7 +209,7 @@ defmodule SquareClient.CatalogStructTest do
     test "defaults currency to USD when not provided", %{bypass: bypass} do
       Bypass.expect_once(bypass, "POST", "/v2/catalog/object", fn conn ->
         {:ok, body, conn} = Plug.Conn.read_body(conn)
-        request = Jason.decode!(body)
+        request = JSON.decode!(body)
 
         [phase] = request["object"]["subscription_plan_variation_data"]["phases"]
         assert phase["pricing"]["price_money"]["currency"] == "USD"
@@ -225,7 +228,7 @@ defmodule SquareClient.CatalogStructTest do
 
         conn
         |> Plug.Conn.put_resp_content_type("application/json")
-        |> Plug.Conn.resp(200, Jason.encode!(response))
+        |> Plug.Conn.resp(200, JSON.encode!(response))
       end)
 
       _log =

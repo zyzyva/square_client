@@ -7,17 +7,19 @@ defmodule SquareClient.PaymentsTest do
   setup do
     bypass = Bypass.open()
 
-    # Configure test environment
-    System.put_env("SQUARE_ENVIRONMENT", "test")
-    System.put_env("SQUARE_API_TEST_URL", "http://localhost:#{bypass.port}/v2")
-    System.put_env("SQUARE_ACCESS_TOKEN", "test_token")
-    System.put_env("SQUARE_LOCATION_ID", "test_location")
+    # Configure Square client for testing
+    original_config = Application.get_all_env(:square_client)
+
+    Application.put_env(:square_client, :api_url, "http://localhost:#{bypass.port}/v2")
+    Application.put_env(:square_client, :access_token, "test_token")
+    Application.put_env(:square_client, :location_id, "test_location")
+    Application.put_env(:square_client, :disable_retries, true)
 
     on_exit(fn ->
-      System.delete_env("SQUARE_ENVIRONMENT")
-      System.delete_env("SQUARE_API_TEST_URL")
-      System.delete_env("SQUARE_ACCESS_TOKEN")
-      System.delete_env("SQUARE_LOCATION_ID")
+      # Restore original configuration
+      Enum.each(original_config, fn {key, value} ->
+        Application.put_env(:square_client, key, value)
+      end)
     end)
 
     {:ok, bypass: bypass}
@@ -29,7 +31,7 @@ defmodule SquareClient.PaymentsTest do
 
       Bypass.expect_once(bypass, "POST", "/v2/payments", fn conn ->
         {:ok, body, conn} = Plug.Conn.read_body(conn)
-        request = Jason.decode!(body)
+        request = JSON.decode!(body)
 
         # Verify request structure
         assert request["source_id"] == "cnon:card-nonce"
@@ -52,13 +54,14 @@ defmodule SquareClient.PaymentsTest do
 
         conn
         |> Plug.Conn.put_resp_content_type("application/json")
-        |> Plug.Conn.resp(200, Jason.encode!(response))
+        |> Plug.Conn.resp(200, JSON.encode!(response))
       end)
 
-      _log = capture_log(fn ->
-        {:ok, result} = Payments.create("cnon:card-nonce", 1000, "USD")
-        send(self(), {:result, result})
-      end)
+      _log =
+        capture_log(fn ->
+          {:ok, result} = Payments.create("cnon:card-nonce", 1000, "USD")
+          send(self(), {:result, result})
+        end)
 
       assert_received {:result, result}
       assert result.payment_id == payment_id
@@ -70,7 +73,7 @@ defmodule SquareClient.PaymentsTest do
     test "creates a payment with optional fields", %{bypass: bypass} do
       Bypass.expect_once(bypass, "POST", "/v2/payments", fn conn ->
         {:ok, body, conn} = Plug.Conn.read_body(conn)
-        request = Jason.decode!(body)
+        request = JSON.decode!(body)
 
         # Verify optional fields
         assert request["customer_id"] == "CUSTOMER_123"
@@ -92,18 +95,21 @@ defmodule SquareClient.PaymentsTest do
 
         conn
         |> Plug.Conn.put_resp_content_type("application/json")
-        |> Plug.Conn.resp(200, Jason.encode!(response))
+        |> Plug.Conn.resp(200, JSON.encode!(response))
       end)
 
-      _log = capture_log(fn ->
-        {:ok, result} = Payments.create("cnon:card-nonce", 2000, "USD",
-          customer_id: "CUSTOMER_123",
-          reference_id: "order-456",
-          note: "Test payment",
-          autocomplete: false
-        )
-        send(self(), {:result, result})
-      end)
+      _log =
+        capture_log(fn ->
+          {:ok, result} =
+            Payments.create("cnon:card-nonce", 2000, "USD",
+              customer_id: "CUSTOMER_123",
+              reference_id: "order-456",
+              note: "Test payment",
+              autocomplete: false
+            )
+
+          send(self(), {:result, result})
+        end)
 
       assert_received {:result, result}
       assert result.payment_id == "PAYMENT_456"
@@ -124,13 +130,14 @@ defmodule SquareClient.PaymentsTest do
 
         conn
         |> Plug.Conn.put_resp_content_type("application/json")
-        |> Plug.Conn.resp(400, Jason.encode!(response))
+        |> Plug.Conn.resp(400, JSON.encode!(response))
       end)
 
-      _log = capture_log(fn ->
-        {:error, error} = Payments.create("bad-nonce", 1000, "USD")
-        send(self(), {:error, error})
-      end)
+      _log =
+        capture_log(fn ->
+          {:error, error} = Payments.create("bad-nonce", 1000, "USD")
+          send(self(), {:error, error})
+        end)
 
       assert_received {:error, "Card declined"}
     end
@@ -138,10 +145,11 @@ defmodule SquareClient.PaymentsTest do
     test "handles network errors", %{bypass: bypass} do
       Bypass.down(bypass)
 
-      _log = capture_log(fn ->
-        {:error, error} = Payments.create("cnon:card-nonce", 1000, "USD")
-        send(self(), {:error, error})
-      end)
+      _log =
+        capture_log(fn ->
+          {:error, error} = Payments.create("cnon:card-nonce", 1000, "USD")
+          send(self(), {:error, error})
+        end)
 
       assert_received {:error, :api_unavailable}
     end
@@ -167,7 +175,7 @@ defmodule SquareClient.PaymentsTest do
 
         conn
         |> Plug.Conn.put_resp_content_type("application/json")
-        |> Plug.Conn.resp(200, Jason.encode!(response))
+        |> Plug.Conn.resp(200, JSON.encode!(response))
       end)
 
       {:ok, payment} = Payments.get(payment_id)
@@ -180,7 +188,7 @@ defmodule SquareClient.PaymentsTest do
       Bypass.expect_once(bypass, "GET", "/v2/payments/NONEXISTENT", fn conn ->
         conn
         |> Plug.Conn.put_resp_content_type("application/json")
-        |> Plug.Conn.resp(404, Jason.encode!(%{"errors" => [%{"code" => "NOT_FOUND"}]}))
+        |> Plug.Conn.resp(404, JSON.encode!(%{"errors" => [%{"code" => "NOT_FOUND"}]}))
       end)
 
       assert {:error, :not_found} = Payments.get("NONEXISTENT")
@@ -205,13 +213,14 @@ defmodule SquareClient.PaymentsTest do
 
         conn
         |> Plug.Conn.put_resp_content_type("application/json")
-        |> Plug.Conn.resp(200, Jason.encode!(response))
+        |> Plug.Conn.resp(200, JSON.encode!(response))
       end)
 
-      _log = capture_log(fn ->
-        {:ok, payment} = Payments.complete(payment_id)
-        send(self(), {:payment, payment})
-      end)
+      _log =
+        capture_log(fn ->
+          {:ok, payment} = Payments.complete(payment_id)
+          send(self(), {:payment, payment})
+        end)
 
       assert_received {:payment, payment}
       assert payment["id"] == payment_id
@@ -231,13 +240,14 @@ defmodule SquareClient.PaymentsTest do
 
         conn
         |> Plug.Conn.put_resp_content_type("application/json")
-        |> Plug.Conn.resp(400, Jason.encode!(response))
+        |> Plug.Conn.resp(400, JSON.encode!(response))
       end)
 
-      _log = capture_log(fn ->
-        {:error, error} = Payments.complete("PAYMENT_123")
-        send(self(), {:error, error})
-      end)
+      _log =
+        capture_log(fn ->
+          {:error, error} = Payments.complete("PAYMENT_123")
+          send(self(), {:error, error})
+        end)
 
       assert_received {:error, "Payment already completed"}
     end
@@ -250,13 +260,14 @@ defmodule SquareClient.PaymentsTest do
       Bypass.expect_once(bypass, "POST", "/v2/payments/#{payment_id}/cancel", fn conn ->
         conn
         |> Plug.Conn.put_resp_content_type("application/json")
-        |> Plug.Conn.resp(200, Jason.encode!(%{}))
+        |> Plug.Conn.resp(200, JSON.encode!(%{}))
       end)
 
-      _log = capture_log(fn ->
-        :ok = Payments.cancel(payment_id)
-        send(self(), :canceled)
-      end)
+      _log =
+        capture_log(fn ->
+          :ok = Payments.cancel(payment_id)
+          send(self(), :canceled)
+        end)
 
       assert_received :canceled
     end
@@ -274,13 +285,14 @@ defmodule SquareClient.PaymentsTest do
 
         conn
         |> Plug.Conn.put_resp_content_type("application/json")
-        |> Plug.Conn.resp(400, Jason.encode!(response))
+        |> Plug.Conn.resp(400, JSON.encode!(response))
       end)
 
-      _log = capture_log(fn ->
-        {:error, error} = Payments.cancel("PAYMENT_123")
-        send(self(), {:error, error})
-      end)
+      _log =
+        capture_log(fn ->
+          {:error, error} = Payments.cancel("PAYMENT_123")
+          send(self(), {:error, error})
+        end)
 
       assert_received {:error, "Payment cannot be canceled"}
     end
@@ -293,7 +305,7 @@ defmodule SquareClient.PaymentsTest do
 
       Bypass.expect_once(bypass, "POST", "/v2/refunds", fn conn ->
         {:ok, body, conn} = Plug.Conn.read_body(conn)
-        request = Jason.decode!(body)
+        request = JSON.decode!(body)
 
         assert request["payment_id"] == payment_id
         assert request["amount_money"]["amount"] == 500
@@ -313,13 +325,14 @@ defmodule SquareClient.PaymentsTest do
 
         conn
         |> Plug.Conn.put_resp_content_type("application/json")
-        |> Plug.Conn.resp(200, Jason.encode!(response))
+        |> Plug.Conn.resp(200, JSON.encode!(response))
       end)
 
-      _log = capture_log(fn ->
-        {:ok, result} = Payments.refund(payment_id, 500, "USD")
-        send(self(), {:result, result})
-      end)
+      _log =
+        capture_log(fn ->
+          {:ok, result} = Payments.refund(payment_id, 500, "USD")
+          send(self(), {:result, result})
+        end)
 
       assert_received {:result, result}
       assert result.refund_id == refund_id
@@ -331,7 +344,7 @@ defmodule SquareClient.PaymentsTest do
     test "creates a refund with reason", %{bypass: bypass} do
       Bypass.expect_once(bypass, "POST", "/v2/refunds", fn conn ->
         {:ok, body, conn} = Plug.Conn.read_body(conn)
-        request = Jason.decode!(body)
+        request = JSON.decode!(body)
 
         assert request["reason"] == "Customer requested"
 
@@ -349,12 +362,14 @@ defmodule SquareClient.PaymentsTest do
 
         conn
         |> Plug.Conn.put_resp_content_type("application/json")
-        |> Plug.Conn.resp(200, Jason.encode!(response))
+        |> Plug.Conn.resp(200, JSON.encode!(response))
       end)
 
-      _log = capture_log(fn ->
-        {:ok, _result} = Payments.refund("PAYMENT_123", 1000, "USD", reason: "Customer requested")
-      end)
+      _log =
+        capture_log(fn ->
+          {:ok, _result} =
+            Payments.refund("PAYMENT_123", 1000, "USD", reason: "Customer requested")
+        end)
     end
   end
 
@@ -384,7 +399,7 @@ defmodule SquareClient.PaymentsTest do
 
         conn
         |> Plug.Conn.put_resp_content_type("application/json")
-        |> Plug.Conn.resp(200, Jason.encode!(response))
+        |> Plug.Conn.resp(200, JSON.encode!(response))
       end)
 
       {:ok, result} = Payments.list()
@@ -412,16 +427,17 @@ defmodule SquareClient.PaymentsTest do
 
         conn
         |> Plug.Conn.put_resp_content_type("application/json")
-        |> Plug.Conn.resp(200, Jason.encode!(response))
+        |> Plug.Conn.resp(200, JSON.encode!(response))
       end)
 
-      {:ok, result} = Payments.list(
-        begin_time: "2024-01-01T00:00:00Z",
-        end_time: "2024-01-31T23:59:59Z",
-        sort_order: "DESC",
-        limit: 10,
-        cursor: "previous_cursor"
-      )
+      {:ok, result} =
+        Payments.list(
+          begin_time: "2024-01-01T00:00:00Z",
+          end_time: "2024-01-31T23:59:59Z",
+          sort_order: "DESC",
+          limit: 10,
+          cursor: "previous_cursor"
+        )
 
       assert result.payments == []
       assert result.cursor == nil
@@ -440,13 +456,14 @@ defmodule SquareClient.PaymentsTest do
 
         conn
         |> Plug.Conn.put_resp_content_type("application/json")
-        |> Plug.Conn.resp(400, Jason.encode!(response))
+        |> Plug.Conn.resp(400, JSON.encode!(response))
       end)
 
-      _log = capture_log(fn ->
-        {:error, error} = Payments.list(begin_time: "invalid")
-        send(self(), {:error, error})
-      end)
+      _log =
+        capture_log(fn ->
+          {:error, error} = Payments.list(begin_time: "invalid")
+          send(self(), {:error, error})
+        end)
 
       assert_received {:error, "Invalid date format"}
     end

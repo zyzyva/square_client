@@ -63,11 +63,11 @@ defmodule SquareClient.Catalog.BasePlanTest do
     end
   end
 
-  describe "Jason.Encoder" do
+  describe "JSON.Encoder" do
     test "encodes to JSON properly" do
       plan = %BasePlan{name: "Test Plan", description: "Test"}
-      json = Jason.encode!(plan)
-      decoded = Jason.decode!(json)
+      json = JSON.encode!(plan)
+      decoded = JSON.decode!(json)
 
       assert decoded == %{
                "name" => "Test Plan",
@@ -77,8 +77,8 @@ defmodule SquareClient.Catalog.BasePlanTest do
 
     test "excludes nil values from JSON" do
       plan = %BasePlan{name: "Test Plan", description: nil}
-      json = Jason.encode!(plan)
-      decoded = Jason.decode!(json)
+      json = JSON.encode!(plan)
+      decoded = JSON.decode!(json)
 
       assert decoded == %{
                "name" => "Test Plan",

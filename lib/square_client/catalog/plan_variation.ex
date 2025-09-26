@@ -3,7 +3,7 @@ defmodule SquareClient.Catalog.PlanVariation do
   Struct representing a Square subscription plan variation.
   """
 
-  @derive Jason.Encoder
+  @derive JSON.Encoder
   defstruct [:base_plan_id, :name, :cadence, :amount, :currency]
 
   @doc """

@@ -7,12 +7,19 @@ defmodule SquareClient.Payments do
 
   # Get API configuration
   defp api_url do
-    Application.get_env(:square_client, :api_url) ||
-      case System.get_env("SQUARE_ENVIRONMENT", "sandbox") do
-        "production" -> "https://connect.squareup.com/v2"
-        "test" -> System.get_env("SQUARE_API_TEST_URL", "http://localhost:4001/v2")
-        _ -> "https://connect.squareupsandbox.com/v2"
-      end
+    case Application.get_env(:square_client, :api_url) do
+      nil ->
+        # Only fall back to environment variables if not explicitly set to nil
+        # This prevents tests from accidentally using real APIs
+        case System.get_env("SQUARE_ENVIRONMENT", "sandbox") do
+          "test" -> raise "Square API URL must be configured in test environment"
+          "production" -> "https://connect.squareup.com/v2"
+          _ -> "https://connect.squareupsandbox.com/v2"
+        end
+
+      url ->
+        url
+    end
   end
 
   defp access_token do
@@ -38,7 +45,15 @@ defmodule SquareClient.Payments do
          System.get_env("SQUARE_ENVIRONMENT") == "test" do
       [retry: false]
     else
-      []
+      [
+        # Enable automatic retries with exponential backoff
+        retry: :transient,
+        retry_delay: fn attempt -> attempt * 100 end,
+        max_retries: 3,
+        # Increase timeouts to prevent connection drops
+        receive_timeout: 30_000,
+        connect_options: [timeout: 10_000]
+      ]
     end
   end
 
@@ -190,13 +205,14 @@ defmodule SquareClient.Payments do
     payment = body["payment"]
     Logger.info("Payment created: #{payment["id"]}")
 
-    {:ok, %{
-      payment_id: payment["id"],
-      status: payment["status"],
-      amount: payment["amount_money"]["amount"],
-      currency: payment["amount_money"]["currency"],
-      created_at: payment["created_at"]
-    }}
+    {:ok,
+     %{
+       payment_id: payment["id"],
+       status: payment["status"],
+       amount: payment["amount_money"]["amount"],
+       currency: payment["amount_money"]["currency"],
+       created_at: payment["created_at"]
+     }}
   end
 
   defp handle_payment_response({:ok, %{status: status, body: body}}) do
@@ -266,12 +282,13 @@ defmodule SquareClient.Payments do
     refund = body["refund"]
     Logger.info("Refund created: #{refund["id"]}")
 
-    {:ok, %{
-      refund_id: refund["id"],
-      payment_id: refund["payment_id"],
-      amount: refund["amount_money"]["amount"],
-      status: refund["status"]
-    }}
+    {:ok,
+     %{
+       refund_id: refund["id"],
+       payment_id: refund["payment_id"],
+       amount: refund["amount_money"]["amount"],
+       status: refund["status"]
+     }}
   end
 
   defp handle_refund_response({:ok, %{status: status, body: body}}) do
@@ -286,10 +303,11 @@ defmodule SquareClient.Payments do
 
   defp handle_list_response({:ok, %{status: status, body: body}})
        when is_success(status) do
-    {:ok, %{
-      payments: body["payments"] || [],
-      cursor: body["cursor"]
-    }}
+    {:ok,
+     %{
+       payments: body["payments"] || [],
+       cursor: body["cursor"]
+     }}
   end
 
   defp handle_list_response({:ok, %{status: status, body: body}}) do

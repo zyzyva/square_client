@@ -3,7 +3,7 @@ defmodule SquareClient.Catalog.BasePlan do
   Struct representing a Square subscription base plan.
   """
 
-  @derive Jason.Encoder
+  @derive JSON.Encoder
   defstruct [:name, :description]
 
   @doc """
