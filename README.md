@@ -1,28 +1,19 @@
 # SquareClient
 
-Async payment processing client for Elixir applications using RabbitMQ message queuing.
+A flexible Elixir client library for Square API integration, focused on subscription management and payment processing.
 
-## Overview
+## Features
 
-SquareClient enables applications to process payments asynchronously through a centralized payment service. Instead of making direct API calls to Square, this library:
-
-1. **Publishes payment requests** to RabbitMQ via HTTP (no AMQP dependencies needed)
-2. **Payment service processes** the requests with Square API
-3. **Receives callbacks** with results via webhooks
-
-This architecture provides resilience, retry capability, and centralized Square credential management.
-
-## Architecture
-
-```
-Your App → RabbitMQ (HTTP) → Payment Service → Square API
-    ↑                                  ↓
-    ←──────── Webhook Callback ────────┘
-```
+- **Direct Square API integration** - No proxy service or message queue required
+- **Subscription plan and variation management** - Following Square's recommended patterns
+- **Synchronous REST API** - Immediate feedback for payment processing
+- **Environment-aware configuration** - Automatic sandbox/production switching
+- **Comprehensive test coverage** - Fast (0.1s), clean tests with mocked API calls
+- **Multiple configuration methods** - Application config, environment variables, or defaults
 
 ## Installation
 
-Add `square_client` to your dependencies:
+Add `square_client` to your dependencies in `mix.exs`:
 
 ```elixir
 def deps do
@@ -34,191 +25,290 @@ end
 
 ## Configuration
 
-Configure the client in your `config/runtime.exs`:
+SquareClient supports flexible configuration with clear precedence:
+
+### Configuration Precedence (highest to lowest)
+
+1. **Application Config** - Set in your app's config files
+2. **Environment Variables** - For deployment and secrets
+3. **Default Values** - Sensible defaults for development
+
+### Method 1: Application Configuration (Recommended)
+
+Configure in your app's `config/config.exs`:
 
 ```elixir
-config :my_app, :payment_service,
-  rabbitmq_url: System.get_env("RABBITMQ_MANAGEMENT_URL", "http://localhost:15672"),
-  app_id: "my_app",  # Identifies your app to the payment service
-  callback_url: System.get_env("PAYMENT_CALLBACK_URL", "https://myapp.com/webhooks/payments"),
-  queue_name: "payments",
-  exchange: "payments",
-  rabbitmq_username: System.get_env("RABBITMQ_USERNAME", "guest"),
-  rabbitmq_password: System.get_env("RABBITMQ_PASSWORD", "guest")
+config :square_client,
+  api_url: "https://connect.squareupsandbox.com/v2",  # or production URL
+  access_token: System.get_env("SQUARE_ACCESS_TOKEN")
 ```
 
-Initialize in your application startup:
+For environment-specific configuration:
 
 ```elixir
-# In lib/my_app/application.ex
-def start(_type, _args) do
-  # Configure payment client
-  payment_config = Application.get_env(:my_app, :payment_service)
-  SquareClient.configure(payment_config)
+# config/prod.exs
+config :square_client,
+  api_url: "https://connect.squareup.com/v2"  # Production API
 
-  # ... rest of your supervision tree
-end
+# config/test.exs
+config :square_client,
+  api_url: "http://localhost:4001/v2",  # Mock server for tests
+  disable_retries: true  # Faster test execution
+```
+
+### Method 2: Environment Variables
+
+Set these environment variables:
+
+- `SQUARE_ACCESS_TOKEN` - Your Square API access token (required)
+- `SQUARE_ENVIRONMENT` - Controls API endpoint selection:
+  - `"production"` - Uses Square production API
+  - `"sandbox"` (default) - Uses Square sandbox API
+  - `"test"` - Uses test URL (for mocking)
+- `SQUARE_API_TEST_URL` - Custom URL for test environment
+- `SQUARE_APPLICATION_ID` - Your Square application ID
+- `SQUARE_LOCATION_ID` - Your Square location ID
+
+Example:
+```bash
+export SQUARE_ACCESS_TOKEN="YOUR_SANDBOX_TOKEN"
+export SQUARE_ENVIRONMENT="sandbox"
+export SQUARE_APPLICATION_ID="YOUR_APP_ID"
+export SQUARE_LOCATION_ID="YOUR_LOCATION_ID"
 ```
 
 ## Usage
 
-All operations are asynchronous and return immediately with a correlation ID:
+### Managing Subscription Plans
 
-### Creating a Customer
+Square recommends using base plans with variations for different billing periods. This allows better catalog organization and pricing flexibility.
 
 ```elixir
-{:ok, :pending, correlation_id} = SquareClient.PaymentQueue.create_customer(%{
-  email_address: "customer@example.com",
-  reference_id: "my_app:user:123"
+# Create a base subscription plan
+{:ok, plan} = SquareClient.Catalog.create_base_subscription_plan(%{
+  name: "Premium Plan",
+  description: "Access to premium features"
 })
 
-# Payment service will POST to your callback URL when complete
+# Create pricing variations
+{:ok, monthly} = SquareClient.Catalog.create_plan_variation(%{
+  base_plan_id: plan.plan_id,
+  name: "Monthly",
+  cadence: "MONTHLY",
+  amount: 999,  # $9.99 in cents
+  currency: "USD"
+})
+
+{:ok, annual} = SquareClient.Catalog.create_plan_variation(%{
+  base_plan_id: plan.plan_id,
+  name: "Annual",
+  cadence: "ANNUAL",
+  amount: 9900,  # $99.00 in cents
+  currency: "USD"
+})
 ```
 
-### Creating a Subscription
+### Listing Plans and Variations
 
 ```elixir
-{:ok, :pending, correlation_id} = SquareClient.PaymentQueue.create_subscription(
-  customer_id,
-  plan_id,
-  card_id: card_id
-)
+# List all subscription plans
+{:ok, plans} = SquareClient.Catalog.list_subscription_plans()
+
+# List all plan variations
+{:ok, variations} = SquareClient.Catalog.list_plan_variations()
+
+# Get a specific catalog object
+{:ok, object} = SquareClient.Catalog.get(object_id)
 ```
 
-### Processing a Payment
+### Payment Processing
 
 ```elixir
-{:ok, :pending, correlation_id} = SquareClient.PaymentQueue.create_payment(
+# Process a payment via the payment service
+{:ok, payment} = SquareClient.Payments.create(
   source_id,
-  1000,  # Amount in cents
-  "USD",
+  amount,
+  currency,
   customer_id: customer_id,
-  note: "Order #1234"
+  reference_id: "order-123"
 )
 ```
 
-### Canceling a Subscription
+## Mix Tasks for Apps
+
+Apps using this library can create Mix tasks for plan management:
 
 ```elixir
-{:ok, :pending, correlation_id} = SquareClient.PaymentQueue.cancel_subscription(
-  subscription_id
-)
-```
+# In your app, create lib/mix/tasks/square.setup_plans.ex
+defmodule Mix.Tasks.Square.SetupPlans do
+  use Mix.Task
 
-## Webhook Callbacks
+  def run(_) do
+    Mix.Task.run("app.start")
 
-The payment service will POST results to your configured `callback_url`. Set up a webhook controller:
+    # Create your app's subscription plans
+    {:ok, plan} = SquareClient.Catalog.create_base_subscription_plan(%{
+      name: "MyApp Premium"
+    })
 
-```elixir
-defmodule MyAppWeb.WebhookController do
-  use MyAppWeb, :controller
-
-  def payment_callback(conn, %{"correlation_id" => correlation_id} = params) do
-    case params do
-      %{"operation" => "subscription.create", "success" => true, "data" => data} ->
-        # Handle successful subscription creation
-
-      %{"operation" => "payment.create", "success" => false, "error" => error} ->
-        # Handle failed payment
-
-      # ... handle other operations
-    end
-
-    conn
-    |> put_status(:ok)
-    |> json(%{received: true})
+    # Save plan IDs to your config/database
+    IO.puts("Created plan: #{plan.plan_id}")
   end
 end
 ```
 
-Add the route:
-
-```elixir
-scope "/webhooks", MyAppWeb do
-  pipe_through :api
-
-  post "/payments", WebhookController, :payment_callback
-end
-```
-
-## Message Flow
-
-1. **Your app** calls `SquareClient.PaymentQueue.create_payment(...)`
-2. **SquareClient** publishes to RabbitMQ with:
-   - Your `app_id` for tracking
-   - A unique `correlation_id`
-   - Your `callback_url` for the response
-3. **Payment service** processes with Square API
-4. **Payment service** POSTs result to your callback URL
-5. **Your webhook** handles the async response
-
-## Benefits
-
-- **No Square credentials in your app** - Only the payment service needs them
-- **Automatic retry** - Payment service handles transient failures
-- **Multi-app support** - Each app identified by its `app_id`
-- **Resilient** - Messages queued if payment service is down
-- **Simple** - No AMQP/Broadway dependencies needed
-
-## How It Works
-
-The library publishes messages to RabbitMQ's management API (typically port 15672) using HTTP, similar to how `swoosh_rabbitmq` handles email. This avoids the need for AMQP connections and Broadway consumers in your application.
-
-Each message includes:
-- `operation`: The payment operation to perform
-- `app_id`: Your application identifier
-- `callback_url`: Where to send the result
-- `correlation_id`: To match requests with responses
-- `params`: Operation-specific parameters
-
-## Environment Variables
-
-### Required for Payment Processing
-
-- `SQUARE_APPLICATION_ID`: Your Square application ID
-- `SQUARE_LOCATION_ID`: Your Square location ID
-- `SQUARE_ACCESS_TOKEN`: Your Square access token (only needed by payment service)
-- `SQUARE_WEBHOOK_SIGNATURE_KEY`: For webhook verification
-- `SQUARE_ENVIRONMENT`: Set to "production" for live payments (default: "sandbox")
-
-### RabbitMQ Configuration
-
-- `RABBITMQ_MANAGEMENT_URL`: RabbitMQ management API URL (default: `http://localhost:15672`)
-- `RABBITMQ_USERNAME`: RabbitMQ username (default: `guest`)
-- `RABBITMQ_PASSWORD`: RabbitMQ password (default: `guest`)
-- `PAYMENT_CALLBACK_URL`: Your webhook endpoint for receiving results
-
-### Square Web Payments SDK
-
-For the frontend Square SDK, configure in your app's `config/prod.exs`:
-
-```elixir
-# config/prod.exs
-config :my_app, :square_sdk_url, "https://web.squarecdn.com/v1/square.js"
-```
-
-Default for development is the sandbox URL: `https://sandbox.web.squarecdn.com/v1/square.js`
-
-Then in your layout:
-
-```heex
-<%= if assigns[:load_square_sdk] do %>
-  <script type="text/javascript" src={Application.get_env(:my_app, :square_sdk_url, "https://sandbox.web.squarecdn.com/v1/square.js")}>
-  </script>
-<% end %>
-```
-
 ## Testing
 
-For local development, you can use Docker to run RabbitMQ:
+The library includes comprehensive tests with mocked API responses:
 
 ```bash
-docker run -d \
-  --name rabbitmq \
-  -p 5672:5672 \
-  -p 15672:15672 \
-  rabbitmq:management
+# Run tests (0.1s execution time)
+mix test
+
+# Tests use Bypass to mock Square API - no real API calls
+# All logs are captured for clean output using ExUnit.CaptureLog
 ```
+
+### Testing in Your App
+
+When testing code that uses SquareClient:
+
+```elixir
+# In your test config
+config :square_client,
+  api_url: "http://localhost:#{bypass_port}/v2",
+  disable_retries: true  # Important for test speed
+```
+
+### Test Performance
+
+Tests run in 0.1 seconds because:
+- API calls are mocked with Bypass (no network requests)
+- Retries are disabled in test environment
+- Logs are captured to prevent output noise
+
+## API Version
+
+This library uses Square API version **2025-01-23** (latest stable).
+
+Key differences from older versions:
+- Uses `pricing` field for variations (not `recurring_price_money`)
+- Supports latest subscription features
+- Improved error messages
+
+## Architecture Decisions
+
+### Why REST API Instead of Message Queues
+
+This library uses synchronous REST API calls instead of message queues (RabbitMQ) because:
+
+1. **Immediate feedback** - Payment processing needs instant response for:
+   - Card declines
+   - Validation errors
+   - Insufficient funds
+
+2. **Simpler error handling** - Direct error responses vs async callbacks
+
+3. **Easier debugging** - Synchronous flow is easier to trace
+
+4. **No infrastructure dependencies** - No need for RabbitMQ, Broadway, etc.
+
+5. **Better UX** - Users get immediate feedback on payment issues
+
+### Thin Client Approach
+
+Each app manages its own Square resources (plans, customers) rather than centralizing in a payment service:
+
+- **Flexibility** - Apps can have different subscription models
+- **Direct control** - Apps manage their own pricing and plans
+- **Easier testing** - No dependency on external services
+- **No single point of failure** - Each app is independent
+
+### Configuration Flexibility
+
+The library checks multiple configuration sources in order:
+1. Application config (for app-specific overrides)
+2. Environment variables (for deployment flexibility)
+3. Defaults (for quick development start)
+
+This allows apps to:
+- Override settings in their config files
+- Deploy with environment variables
+- Start developing with zero configuration
+
+## Environment Detection
+
+The library automatically detects and adapts to the environment:
+
+- **Test** (`MIX_ENV=test`)
+  - Disables HTTP retries for fast tests
+  - Can use custom test URL for mocking
+
+- **Development** (`MIX_ENV=dev`)
+  - Uses sandbox API by default
+  - Full retry behavior enabled
+
+- **Production** (`MIX_ENV=prod`)
+  - Ready for production API
+  - Set `SQUARE_ENVIRONMENT=production` to use live API
+
+## Troubleshooting
+
+### Tests are slow
+- Ensure `disable_retries: true` is set in test config
+- Check that `SQUARE_ENVIRONMENT` isn't overriding test settings
+- Verify Bypass is running (check for port conflicts)
+
+### API calls failing
+- Verify `SQUARE_ACCESS_TOKEN` is set correctly
+- Check you're using the right environment (sandbox vs production)
+- Ensure API version compatibility (check Square dashboard)
+- Look for rate limiting (Square has API rate limits)
+
+### Can't delete subscription plans
+- Square doesn't allow deletion of subscription plans once created
+- This is by design to maintain historical records
+- Use new plan names for testing
+- Plans can be archived but not deleted
+
+### Configuration not working
+- Check configuration precedence (app config > env vars > defaults)
+- Use `Application.get_env(:square_client, :api_url)` to verify
+- Ensure config files are loaded (`import_config`)
+
+## Square Dashboard URLs
+
+- **Sandbox Dashboard**: https://squareupsandbox.com/dashboard
+- **Production Dashboard**: https://squareup.com/dashboard
+- **Developer Dashboard**: https://developer.squareup.com/apps
+
+## Test Cards
+
+For testing in sandbox:
+- Success: 4111 1111 1111 1111
+- Declined: 4000 0000 0000 0002
+- See `TEST_CARDS.md` for complete list
+
+## Contributing
+
+1. Write tests for new features
+   - Use `capture_log` for clean test output
+   - Mock API calls with Bypass
+
+2. Follow Elixir best practices
+   - Pattern matching over conditionals
+   - Function heads for different cases
+   - Meaningful function and variable names
+
+3. Update documentation
+   - Keep this README current
+   - Document new configuration options
+   - Add examples for new features
+
+4. Ensure fast tests
+   - All tests should complete in < 1 second
+   - Disable retries in test environment
+   - Mock all external API calls
 
 ## License
 
