@@ -27,6 +27,22 @@ end
 
 SquareClient supports flexible configuration with clear precedence:
 
+### API Key Management
+
+**Single Set of Keys (Recommended)**
+Most organizations should use one Square account across all apps:
+- Single business entity with multiple applications
+- All payments go to one bank account
+- Simpler Square dashboard management
+- Easier reconciliation and reporting
+
+**Multiple Sets of Keys**
+Only needed when:
+- Different legal entities (each app is a separate business)
+- Marketplace model (each app represents different merchants)
+- Compliance requirements for payment isolation
+- Payments need separate bank account destinations
+
 ### Configuration Precedence (highest to lowest)
 
 1. **Application Config** - Set in your app's config files
@@ -35,12 +51,24 @@ SquareClient supports flexible configuration with clear precedence:
 
 ### Method 1: Application Configuration (Recommended)
 
-Configure in your app's `config/config.exs`:
-
+**For Shared Keys Across All Apps:**
 ```elixir
+# Each app uses the same Square account
+# config/config.exs in each app
 config :square_client,
-  api_url: "https://connect.squareupsandbox.com/v2",  # or production URL
-  access_token: System.get_env("SQUARE_ACCESS_TOKEN")
+  api_url: "https://connect.squareupsandbox.com/v2",
+  access_token: System.get_env("SQUARE_ACCESS_TOKEN")  # Same token for all apps
+```
+
+**For App-Specific Keys:**
+```elixir
+# contacts4us/config/config.exs
+config :square_client,
+  access_token: System.get_env("CONTACTS4US_SQUARE_TOKEN")
+
+# analytics_app/config/config.exs
+config :square_client,
+  access_token: System.get_env("ANALYTICS_SQUARE_TOKEN")
 ```
 
 For environment-specific configuration:
