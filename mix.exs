@@ -28,6 +28,8 @@ defmodule SquareClient.MixProject do
   defp deps do
     [
       {:req, "~> 0.5"},
+      {:plug, "~> 1.16", optional: true},
+      {:plug_crypto, "~> 2.0"},
       {:ecto, "~> 3.13", optional: true},
       {:ex_doc, "~> 0.35", only: :dev, runtime: false},
       {:mox, "~> 1.1", only: :test},

@@ -42,7 +42,13 @@ defmodule SquareClient.Webhooks do
       :crypto.mac(:hmac, :sha256, signature_key, payload)
       |> Base.encode64()
 
-    Plug.Crypto.secure_compare(signature, expected_signature)
+    # Use secure comparison if Plug.Crypto is available, otherwise basic comparison
+    if Code.ensure_loaded?(Plug.Crypto) do
+      apply(Plug.Crypto, :secure_compare, [signature, expected_signature])
+    else
+      # Fallback to basic comparison (less secure but functional)
+      signature == expected_signature
+    end
   rescue
     _ -> false
   end

@@ -2,14 +2,22 @@
 
 A flexible Elixir client library for Square API integration, focused on subscription management and payment processing.
 
+## Documentation
+
+- 📖 [Webhook Integration Guide](WEBHOOK.md) - Complete guide for webhook implementation
+- 📝 [Changelog](CHANGELOG.md) - Version history and changes
+- 🧪 [Test Cards](TEST_CARDS.md) - Test credit card numbers for sandbox
+
 ## Features
 
 - **Direct Square API integration** - No proxy service or message queue required
+- **Webhook handling infrastructure** - Standardized webhook processing with signature verification
 - **Subscription plan and variation management** - Following Square's recommended patterns
 - **Synchronous REST API** - Immediate feedback for payment processing
 - **Environment-aware configuration** - Automatic sandbox/production switching
 - **Comprehensive test coverage** - Fast (0.1s), clean tests with mocked API calls
 - **Multiple configuration methods** - Application config, environment variables, or defaults
+- **Behaviour-based extensibility** - Implement webhooks consistently across all apps
 
 ## Installation
 
@@ -263,6 +271,183 @@ This allows apps to:
 - Override settings in their config files
 - Deploy with environment variables
 - Start developing with zero configuration
+
+## Webhook Handling
+
+> 📖 **For comprehensive webhook documentation, see [WEBHOOK.md](WEBHOOK.md)**
+
+SquareClient provides a standardized webhook infrastructure for all your apps:
+
+### Features
+- **Automatic signature verification** - Ensures webhooks are from Square
+- **Standardized behaviour** - Consistent webhook handling across all apps
+- **Plug-based architecture** - Easy integration with Phoenix/Plug applications
+- **Comprehensive error handling** - Graceful handling of invalid webhooks
+
+### Quick Start
+
+1. **Implement the webhook handler behaviour** in your app:
+
+```elixir
+defmodule MyApp.SquareWebhookHandler do
+  @behaviour SquareClient.WebhookHandler
+
+  @impl true
+  def handle_event(%{event_type: "payment.created", data: data}) do
+    # Process payment
+    MyApp.Payments.process_payment(data)
+    :ok
+  end
+
+  @impl true
+  def handle_event(%{event_type: "subscription.created", data: data}) do
+    # Create local subscription record
+    MyApp.Subscriptions.create_from_square(data)
+    :ok
+  end
+
+  # Catch-all for unhandled events
+  @impl true
+  def handle_event(_event) do
+    # Log or ignore
+    :ok
+  end
+end
+```
+
+2. **Configure the handler and signature key**:
+
+```elixir
+# In config/config.exs
+config :square_client,
+  webhook_handler: MyApp.SquareWebhookHandler,
+  webhook_signature_key: System.get_env("SQUARE_WEBHOOK_SIGNATURE_KEY")
+```
+
+3. **Add the webhook plug to your router**:
+
+```elixir
+# In your Phoenix router
+pipeline :square_webhook do
+  plug :accepts, ["json"]
+  plug SquareClient.WebhookPlug
+end
+
+scope "/webhooks", MyAppWeb do
+  pipe_through :square_webhook
+  post "/square", WebhookController, :handle
+end
+```
+
+4. **Create a minimal controller**:
+
+```elixir
+defmodule MyAppWeb.WebhookController do
+  use MyAppWeb, :controller
+
+  def handle(conn, _params) do
+    case conn.assigns[:square_event] do
+      {:ok, event} ->
+        # Event was processed by your handler
+        json(conn, %{received: true})
+
+      {:error, :invalid_signature} ->
+        conn
+        |> put_status(:unauthorized)
+        |> json(%{error: "Invalid signature"})
+
+      {:error, _reason} ->
+        conn
+        |> put_status(:bad_request)
+        |> json(%{error: "Invalid webhook"})
+    end
+  end
+end
+```
+
+### How It Works
+
+1. **Square sends webhook** to your endpoint
+2. **WebhookPlug intercepts** the request
+3. **Signature is verified** using HMAC-SHA256
+4. **Event is parsed** from JSON
+5. **Handler is called** with the parsed event
+6. **Result stored** in `conn.assigns.square_event`
+7. **Controller responds** based on the result
+
+### Configuration Options
+
+```elixir
+config :square_client,
+  # Required: Your webhook handler module
+  webhook_handler: MyApp.SquareWebhookHandler,
+
+  # Required: Square webhook signature key (from Square dashboard)
+  webhook_signature_key: "your_signature_key_here"
+```
+
+Or use environment variables:
+- `SQUARE_WEBHOOK_SIGNATURE_KEY` - Your webhook signature key
+
+### Testing Webhooks
+
+In your tests:
+
+```elixir
+defmodule MyAppWeb.WebhookControllerTest do
+  use MyAppWeb.ConnCase
+
+  test "processes valid webhook", %{conn: conn} do
+    body = ~s({"type": "payment.created", "data": {...}})
+    signature = generate_signature(body, "test_key")
+
+    conn =
+      conn
+      |> put_req_header("x-square-hmacsha256-signature", signature)
+      |> post("/webhooks/square", body)
+
+    assert json_response(conn, 200) == %{"received" => true}
+  end
+
+  defp generate_signature(payload, key) do
+    :crypto.mac(:hmac, :sha256, key, payload)
+    |> Base.encode64()
+  end
+end
+```
+
+### Webhook Events Reference
+
+Common Square webhook events your handler might receive:
+
+**Payments:**
+- `payment.created` - Payment completed
+- `payment.updated` - Payment status changed
+
+**Subscriptions:**
+- `subscription.created` - New subscription started
+- `subscription.updated` - Subscription modified
+- `subscription.canceled` - Subscription ended
+
+**Invoices:**
+- `invoice.payment_made` - Subscription payment successful
+- `invoice.payment_failed` - Payment failed (card declined, etc.)
+
+**Customers:**
+- `customer.created` - New customer created
+- `customer.updated` - Customer information changed
+
+**Refunds:**
+- `refund.created` - Refund processed
+- `refund.updated` - Refund status changed
+
+### Security Best Practices
+
+1. **Always verify signatures** - The plug handles this automatically
+2. **Use HTTPS only** - Never accept webhooks over HTTP in production
+3. **Validate event data** - Don't trust webhook data without validation
+4. **Idempotency** - Handle duplicate webhooks gracefully (Square may retry)
+5. **Timeout handling** - Respond quickly (< 10 seconds) to avoid retries
 
 ## Environment Detection
 
