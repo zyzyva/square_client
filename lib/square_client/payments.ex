@@ -1,6 +1,37 @@
 defmodule SquareClient.Payments do
   @moduledoc """
   Handle payment operations directly with Square API.
+
+  ## Payment Types
+
+  This module supports two main payment patterns:
+
+  ### 1. Standard Payments
+  Use `create/4` for full control over payment parameters. Ideal for:
+  - E-commerce transactions
+  - Custom payment flows
+  - Complex payment requirements
+
+  ### 2. One-Time Purchases
+  Use `create_one_time/4` for time-based access purchases. Perfect for:
+  - 30-day passes
+  - Annual memberships
+  - Trial periods that don't auto-renew
+
+  Unlike subscriptions, one-time purchases:
+  - Don't auto-renew (user must manually repurchase)
+  - Give users more control over spending
+  - Work well for annual plans or special offers
+  - Require tracking expiration dates in your app
+
+  ## Examples
+
+      # Standard payment
+      {:ok, payment} = Payments.create(nonce, 1000, "USD", customer_id: "CUS123")
+
+      # One-time purchase for 30-day access
+      {:ok, payment} = Payments.create_one_time("CUS123", nonce, 2999,
+                        description: "30-day premium")
   """
 
   require Logger
@@ -172,6 +203,43 @@ defmodule SquareClient.Payments do
       )
     )
     |> handle_refund_response()
+  end
+
+  @doc """
+  Create a one-time payment with simpler interface for time-based access.
+
+  This is a convenience function for apps that sell time-based access
+  (like 30-day or yearly passes) instead of subscriptions.
+
+  ## Parameters
+    * `customer_id` - Square customer ID
+    * `source_id` - Payment source (card nonce or saved card ID)
+    * `amount` - Amount in cents
+    * `opts` - Options including:
+      * `:currency` - Currency code (default "USD")
+      * `:description` - Description for the payment
+      * `:app_name` - App name for reference tracking
+
+  ## Examples
+
+      SquareClient.Payments.create_one_time(
+        "CUSTOMER_ID",
+        "card_nonce",
+        9999,
+        description: "30-day premium access",
+        app_name: :my_app
+      )
+  """
+  def create_one_time(customer_id, source_id, amount, opts \\ []) do
+    currency = opts[:currency] || "USD"
+    app_name = opts[:app_name] || "app"
+    description = opts[:description] || "One-time purchase"
+
+    create(source_id, amount, currency,
+      customer_id: customer_id,
+      reference_id: "#{app_name}:otp:#{:rand.uniform(999_999)}",
+      note: description
+    )
   end
 
   @doc """

@@ -159,8 +159,10 @@ Square recommends using base plans with variations for different billing periods
 
 ### Payment Processing
 
+#### Standard Payments
+
 ```elixir
-# Process a payment via the payment service
+# Process a payment with full control
 {:ok, payment} = SquareClient.Payments.create(
   source_id,
   amount,
@@ -168,6 +170,39 @@ Square recommends using base plans with variations for different billing periods
   customer_id: customer_id,
   reference_id: "order-123"
 )
+```
+
+#### One-Time Purchases
+
+Perfect for selling time-based access (30-day passes, yearly access, etc.) instead of auto-renewing subscriptions:
+
+```elixir
+# Simple one-time payment for time-based access
+{:ok, payment} = SquareClient.Payments.create_one_time(
+  customer_id,
+  source_id,      # Card nonce or saved card ID
+  9999,           # Amount in cents ($99.99)
+  description: "30-day premium access",
+  app_name: :my_app
+)
+
+# In your app, grant time-limited access after successful payment:
+expires_at = DateTime.add(DateTime.utc_now(), 30, :day)
+# Update user with expiration date
+```
+
+**When to use one-time purchases vs subscriptions:**
+- **One-time**: User manually renews, better for annual plans or trial offers
+- **Subscriptions**: Auto-renews, better for monthly plans and regular revenue
+- **Both**: Offer choice - some users prefer control over auto-renewal
+
+```elixir
+# Example: Offering both subscription and one-time options
+plans = [
+  %{type: :subscription, name: "Monthly Premium", price: 999},     # Auto-renews
+  %{type: :one_time, name: "30-Day Pass", price: 999, days: 30},  # Manual renewal
+  %{type: :one_time, name: "Annual Pass", price: 9999, days: 365}  # Better value
+]
 ```
 
 ## Mix Tasks for Apps

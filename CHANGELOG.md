@@ -8,14 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- One-time payment support with `SquareClient.Payments.create_one_time/4` for time-based access
 - Webhook handling infrastructure with `SquareClient.WebhookHandler` behaviour
 - `SquareClient.WebhookPlug` for automatic signature verification and event parsing
 - Comprehensive webhook documentation in WEBHOOK.md
 - Test helpers for webhook signature generation
 - Support for all major Square webhook event types
+- Documentation for choosing between one-time purchases and subscriptions
 
 ### Changed
-- Enhanced README with webhook integration guide
+- Enhanced README with webhook integration guide and one-time payment examples
 - Improved test coverage with `capture_log` to prevent log leaks
 
 ### Fixed

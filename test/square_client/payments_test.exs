@@ -468,4 +468,171 @@ defmodule SquareClient.PaymentsTest do
       assert_received {:error, "Invalid date format"}
     end
   end
+
+  describe "create_one_time/4" do
+    test "creates a one-time payment successfully", %{bypass: bypass} do
+      payment_id = "PAYMENT_ONE_TIME_123"
+      customer_id = "CUSTOMER_123"
+
+      Bypass.expect_once(bypass, "POST", "/v2/payments", fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        request = JSON.decode!(body)
+
+        # Verify request structure
+        assert request["source_id"] == "cnon:card-nonce"
+        assert request["amount_money"]["amount"] == 2999
+        assert request["amount_money"]["currency"] == "USD"
+        assert request["customer_id"] == customer_id
+        assert request["note"] == "30-day premium access"
+        assert String.starts_with?(request["reference_id"], "test_app:otp:")
+        assert request["idempotency_key"] != nil
+
+        response = %{
+          "payment" => %{
+            "id" => payment_id,
+            "status" => "APPROVED",
+            "amount_money" => %{
+              "amount" => 2999,
+              "currency" => "USD"
+            },
+            "created_at" => "2024-01-15T12:00:00Z"
+          }
+        }
+
+        conn
+        |> Plug.Conn.put_resp_header("content-type", "application/json")
+        |> Plug.Conn.resp(200, JSON.encode!(response))
+      end)
+
+      _log =
+        capture_log(fn ->
+          {:ok, result} =
+            Payments.create_one_time(customer_id, "cnon:card-nonce", 2999,
+              description: "30-day premium access",
+              app_name: :test_app
+            )
+
+          send(self(), {:ok, result})
+        end)
+
+      assert_received {:ok, payment}
+      assert payment.payment_id == payment_id
+      assert payment.status == "APPROVED"
+      assert payment.amount == 2999
+    end
+
+    test "uses default values when options not provided", %{bypass: bypass} do
+      customer_id = "CUSTOMER_123"
+
+      Bypass.expect_once(bypass, "POST", "/v2/payments", fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        request = JSON.decode!(body)
+
+        # Verify default values are used
+        assert request["amount_money"]["currency"] == "USD"
+        assert request["note"] == "One-time purchase"
+        assert String.starts_with?(request["reference_id"], "app:otp:")
+
+        response = %{
+          "payment" => %{
+            "id" => "PAYMENT_456",
+            "status" => "APPROVED",
+            "amount_money" => %{
+              "amount" => 1000,
+              "currency" => "USD"
+            },
+            "created_at" => "2024-01-15T12:00:00Z"
+          }
+        }
+
+        conn
+        |> Plug.Conn.put_resp_header("content-type", "application/json")
+        |> Plug.Conn.resp(200, JSON.encode!(response))
+      end)
+
+      _log =
+        capture_log(fn ->
+          {:ok, result} = Payments.create_one_time(customer_id, "cnon:card-nonce", 1000)
+          send(self(), {:ok, result})
+        end)
+
+      assert_received {:ok, payment}
+      assert payment.payment_id == "PAYMENT_456"
+    end
+
+    test "handles card declined errors", %{bypass: bypass} do
+      customer_id = "CUSTOMER_123"
+
+      Bypass.expect_once(bypass, "POST", "/v2/payments", fn conn ->
+        response = %{
+          "errors" => [
+            %{
+              "code" => "CARD_DECLINED",
+              "detail" => "Card was declined",
+              "category" => "PAYMENT_METHOD_ERROR"
+            }
+          ]
+        }
+
+        conn
+        |> Plug.Conn.put_resp_header("content-type", "application/json")
+        |> Plug.Conn.resp(400, JSON.encode!(response))
+      end)
+
+      _log =
+        capture_log(fn ->
+          {:error, error} =
+            Payments.create_one_time(customer_id, "cnon:card-nonce", 1000,
+              description: "Test purchase"
+            )
+
+          send(self(), {:error, error})
+        end)
+
+      assert_received {:error, "Card was declined"}
+    end
+
+    test "supports different currency options", %{bypass: bypass} do
+      customer_id = "CUSTOMER_123"
+
+      Bypass.expect_once(bypass, "POST", "/v2/payments", fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        request = JSON.decode!(body)
+
+        # Verify custom currency is used
+        assert request["amount_money"]["currency"] == "EUR"
+
+        response = %{
+          "payment" => %{
+            "id" => "PAYMENT_789",
+            "status" => "APPROVED",
+            "amount_money" => %{
+              "amount" => 5000,
+              "currency" => "EUR"
+            },
+            "created_at" => "2024-01-15T12:00:00Z"
+          }
+        }
+
+        conn
+        |> Plug.Conn.put_resp_header("content-type", "application/json")
+        |> Plug.Conn.resp(200, JSON.encode!(response))
+      end)
+
+      _log =
+        capture_log(fn ->
+          {:ok, result} =
+            Payments.create_one_time(customer_id, "cnon:card-nonce", 5000,
+              description: "Annual pass",
+              currency: "EUR"
+            )
+
+          send(self(), {:ok, result})
+        end)
+
+      assert_received {:ok, payment}
+      assert payment.payment_id == "PAYMENT_789"
+      assert payment.currency == "EUR"
+    end
+  end
 end
