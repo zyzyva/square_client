@@ -60,9 +60,8 @@ defmodule SquareClient.Plans.Formatter do
   def get_one_time_purchases(app, config_path \\ "square_plans.json", opts \\ []) do
     include_inactive = Keyword.get(opts, :include_inactive, false)
     config = load_full_config(app, config_path)
-    env = environment(app)
 
-    case config[env]["one_time_purchases"] do
+    case config["one_time_purchases"] do
       nil ->
         []
 
@@ -341,19 +340,6 @@ defmodule SquareClient.Plans.Formatter do
 
       _ ->
         %{}
-    end
-  end
-
-  defp environment(app) do
-    env =
-      Application.get_env(app, :environment) ||
-        Application.get_env(app, :env) ||
-        Mix.env()
-
-    case env do
-      :prod -> "production"
-      :production -> "production"
-      _ -> "development"
     end
   end
 end

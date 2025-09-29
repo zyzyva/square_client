@@ -20,10 +20,9 @@ defmodule SquareClient.Plans do
       SquareClient.Plans.get_one_time_purchases(:my_app)
   """
   def get_one_time_purchases(app, config_path \\ "square_plans.json") do
-    env = environment(app)
     config = load_config(app, config_path)
 
-    case config[env]["one_time_purchases"] do
+    case config["one_time_purchases"] do
       nil -> %{}
       purchases -> purchases
     end
@@ -44,7 +43,7 @@ defmodule SquareClient.Plans do
   end
 
   @doc """
-  Get all plan configurations for the current environment.
+  Get all plan configurations with environment-specific IDs.
 
   ## Parameters
 
@@ -58,14 +57,21 @@ defmodule SquareClient.Plans do
       SquareClient.Plans.get_plans(:my_app, "custom_plans.json")
   """
   def get_plans(app, config_path \\ "square_plans.json") do
-    env = environment(app)
     config = load_config(app, config_path)
+    env = environment(app)
 
-    case config[env]["plans"] do
-      nil -> %{}
-      plans -> plans
-    end
+    extract_plans(config, env)
   end
+
+  # Extract plans from config
+  defp extract_plans(%{"plans" => plans}, env) when is_map(plans) do
+    # Transform each plan for the environment
+    Map.new(plans, fn {key, plan} ->
+      {key, transform_plan_for_environment(plan, env)}
+    end)
+  end
+
+  defp extract_plans(_, _), do: %{}
 
   @doc """
   Get a specific plan configuration by plan key.
@@ -99,8 +105,10 @@ defmodule SquareClient.Plans do
   """
   def get_variation(app, plan_key, variation_key, config_path \\ "square_plans.json") do
     case get_plan(app, plan_key, config_path) do
-      nil -> nil
-      plan -> plan["variations"][to_string(variation_key)]
+      %{"variations" => variations} when is_map(variations) ->
+        variations[to_string(variation_key)]
+      _ ->
+        nil
     end
   end
 
@@ -117,8 +125,8 @@ defmodule SquareClient.Plans do
   """
   def get_variation_id(app, plan_key, variation_key, config_path \\ "square_plans.json") do
     case get_variation(app, plan_key, variation_key, config_path) do
-      nil -> nil
-      variation -> variation["variation_id"]
+      %{"variation_id" => id} -> id
+      _ -> nil
     end
   end
 
@@ -136,24 +144,33 @@ defmodule SquareClient.Plans do
     config = load_config(app, config_path)
     env = environment(app)
 
-    # Ensure nested structure exists
-    config_with_env = Map.put_new(config, env, %{"plans" => %{}})
-
-    config_with_plans =
-      put_in(config_with_env, [env, "plans"], config_with_env[env]["plans"] || %{})
-
-    config_with_plan =
-      put_in(
-        config_with_plans,
-        [env, "plans", plan_key],
-        config_with_plans[env]["plans"][plan_key] || %{}
-      )
+    id_field = environment_id_field(env, :base)
 
     updated_config =
-      put_in(config_with_plan, [env, "plans", plan_key, "base_plan_id"], base_plan_id)
+      config
+      |> ensure_plan_exists(plan_key)
+      |> put_in(["plans", plan_key, id_field], base_plan_id)
 
     save_config(app, updated_config, config_path)
   end
+
+  defp ensure_plan_exists(config, plan_key) do
+    config = Map.put_new(config, "plans", %{})
+
+    # Ensure the plan exists with both sandbox and production ID fields
+    default_plan = %{
+      "sandbox_base_plan_id" => nil,
+      "production_base_plan_id" => nil
+    }
+
+    existing_plan = config["plans"][plan_key] || default_plan
+    put_in(config, ["plans", plan_key], existing_plan)
+  end
+
+  defp environment_id_field("production", :base), do: "production_base_plan_id"
+  defp environment_id_field(_, :base), do: "sandbox_base_plan_id"
+  defp environment_id_field("production", :variation), do: "production_variation_id"
+  defp environment_id_field(_, :variation), do: "sandbox_variation_id"
 
   @doc """
   Update variation ID after creation in Square.
@@ -176,41 +193,23 @@ defmodule SquareClient.Plans do
     config = load_config(app, config_path)
     env = environment(app)
 
-    # Ensure nested structure exists
-    config_with_env = Map.put_new(config, env, %{"plans" => %{}})
-
-    config_with_plans =
-      put_in(config_with_env, [env, "plans"], config_with_env[env]["plans"] || %{})
-
-    config_with_plan =
-      put_in(
-        config_with_plans,
-        [env, "plans", plan_key],
-        config_with_plans[env]["plans"][plan_key] || %{}
-      )
-
-    config_with_variations =
-      put_in(
-        config_with_plan,
-        [env, "plans", plan_key, "variations"],
-        config_with_plan[env]["plans"][plan_key]["variations"] || %{}
-      )
-
-    config_with_variation =
-      put_in(
-        config_with_variations,
-        [env, "plans", plan_key, "variations", variation_key],
-        config_with_variations[env]["plans"][plan_key]["variations"][variation_key] || %{}
-      )
+    id_field = environment_id_field(env, :variation)
 
     updated_config =
-      put_in(
-        config_with_variation,
-        [env, "plans", plan_key, "variations", variation_key, "variation_id"],
-        variation_id
-      )
+      config
+      |> ensure_variation_exists(plan_key, variation_key)
+      |> put_in(["plans", plan_key, "variations", variation_key, id_field], variation_id)
 
     save_config(app, updated_config, config_path)
+  end
+
+  defp ensure_variation_exists(config, plan_key, variation_key) do
+    config
+    |> ensure_plan_exists(plan_key)
+    |> put_in(["plans", plan_key, "variations"],
+              config["plans"][plan_key]["variations"] || %{})
+    |> put_in(["plans", plan_key, "variations", variation_key],
+              config["plans"][plan_key]["variations"][variation_key] || %{})
   end
 
   @doc """
@@ -224,15 +223,20 @@ defmodule SquareClient.Plans do
   def all_configured?(app, config_path \\ "square_plans.json") do
     plans = get_plans(app, config_path)
 
-    Enum.all?(plans, fn {_key, plan} ->
-      has_base_plan = plan["base_plan_id"] != nil
-
-      has_all_variations =
-        Enum.all?(plan["variations"] || %{}, fn {_vkey, variation} ->
-          variation["variation_id"] != nil
+    Enum.all?(plans, fn
+      {_key, %{"base_plan_id" => base_id, "variations" => variations}}
+      when is_binary(base_id) and is_map(variations) ->
+        Enum.all?(variations, fn
+          {_vkey, %{"variation_id" => var_id}} when is_binary(var_id) -> true
+          _ -> false
         end)
 
-      has_base_plan && has_all_variations
+      {_key, %{"type" => "free"}} ->
+        # Free plans don't need Square IDs
+        true
+
+      _ ->
+        false
     end)
   end
 
@@ -258,23 +262,55 @@ defmodule SquareClient.Plans do
       variations: []
     }
 
-    Enum.reduce(plans, unconfigured, fn {plan_key, plan}, acc ->
-      acc =
-        if plan["base_plan_id"] == nil do
-          %{acc | base_plans: [{plan_key, plan} | acc.base_plans]}
-        else
-          acc
+    Enum.reduce(plans, unconfigured, fn
+      {_plan_key, %{"type" => "free"}}, acc ->
+        # Skip free plans - they don't need Square IDs
+        acc
+
+      {plan_key, %{"base_plan_id" => nil} = plan}, acc ->
+        # Plan needs base plan ID, but still check variations for tracking
+        acc = %{acc | base_plans: [{plan_key, plan} | acc.base_plans]}
+
+        # Still check variations in case we want to track them
+        case plan do
+          %{"variations" => variations} when is_map(variations) ->
+            variations_needing_creation =
+              variations
+              |> Enum.reject(fn
+                {_vkey, %{"variation_id" => id}} when is_binary(id) -> true
+                _ -> false
+              end)
+              |> Enum.map(fn {vkey, variation} ->
+                {plan_key, vkey, variation, nil}  # base_plan_id is nil
+              end)
+
+            %{acc | variations: variations_needing_creation ++ acc.variations}
+          _ ->
+            acc
         end
 
-      variations_needing_creation =
-        Enum.filter(plan["variations"] || %{}, fn {_vkey, variation} ->
-          variation["variation_id"] == nil
-        end)
-        |> Enum.map(fn {vkey, variation} ->
-          {plan_key, vkey, variation, plan["base_plan_id"]}
-        end)
+      {plan_key, %{"base_plan_id" => base_id, "variations" => variations}}, acc
+      when is_map(variations) ->
+        # Check variations for missing IDs
+        variations_needing_creation =
+          variations
+          |> Enum.reject(fn
+            {_vkey, %{"variation_id" => id}} when is_binary(id) -> true
+            _ -> false
+          end)
+          |> Enum.map(fn {vkey, variation} ->
+            {plan_key, vkey, variation, base_id}
+          end)
 
-      %{acc | variations: variations_needing_creation ++ acc.variations}
+        %{acc | variations: variations_needing_creation ++ acc.variations}
+
+      {_plan_key, %{"base_plan_id" => base_id}}, acc when is_binary(base_id) ->
+        # Plan has ID but no variations - that's ok
+        acc
+
+      _, acc ->
+        # Skip any other format
+        acc
     end)
   end
 
@@ -369,9 +405,54 @@ defmodule SquareClient.Plans do
   end
 
   defp default_config do
+    # Return the new unified structure for new configs
     %{
-      "development" => %{"plans" => %{}},
-      "production" => %{"plans" => %{}}
+      "plans" => %{},
+      "one_time_purchases" => %{}
     }
+  end
+
+  # Transform a plan to use the appropriate environment-specific IDs
+  defp transform_plan_for_environment(plan, env) do
+    plan
+    |> maybe_set_base_plan_id(env)
+    |> maybe_transform_variations(env)
+  end
+
+  # Pattern match on free plans - no transformation needed
+  defp maybe_set_base_plan_id(%{"type" => "free"} = plan, _env), do: plan
+
+  # Pattern match when we have sandbox/production fields (transform to base_plan_id)
+  defp maybe_set_base_plan_id(%{"sandbox_base_plan_id" => sandbox, "production_base_plan_id" => production} = plan, env) do
+    base_plan_id = if env == "production", do: production, else: sandbox
+
+    plan
+    |> Map.put("base_plan_id", base_plan_id)
+    |> Map.delete("sandbox_base_plan_id")
+    |> Map.delete("production_base_plan_id")
+  end
+
+  # No IDs or already has base_plan_id - return as is
+  defp maybe_set_base_plan_id(plan, _env), do: plan
+
+  # Pattern match when variations exist
+  defp maybe_transform_variations(%{"variations" => variations} = plan, env) when is_map(variations) do
+    transformed_variations = Map.new(variations, fn {key, variation} ->
+      {key, transform_variation_for_environment(variation, env)}
+    end)
+    Map.put(plan, "variations", transformed_variations)
+  end
+
+  # No variations - return as is
+  defp maybe_transform_variations(plan, _env), do: plan
+
+  defp transform_variation_for_environment(variation, env) do
+    id_field = if env == "production", do: "production_variation_id", else: "sandbox_variation_id"
+    variation_id = variation[id_field]
+
+    variation
+    |> Map.put("variation_id", variation_id)
+    |> Map.delete("sandbox_variation_id")
+    |> Map.delete("production_variation_id")
   end
 end

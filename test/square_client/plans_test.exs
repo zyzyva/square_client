@@ -29,12 +29,12 @@ defmodule SquareClient.PlansTest do
       assert {:ok, ^path} = Plans.init_config(@test_app, @test_config)
       assert File.exists?(path)
 
-      # Verify structure
+      # Verify structure - new unified format
       {:ok, content} = File.read(path)
       {:ok, config} = JSON.decode(content)
 
-      assert config["development"]["plans"] == %{}
-      assert config["production"]["plans"] == %{}
+      assert config["plans"] == %{}
+      assert config["one_time_purchases"] == %{}
     end
 
     test "returns error if config already exists", %{path: path} do
@@ -53,16 +53,12 @@ defmodule SquareClient.PlansTest do
 
     test "returns plans for current environment", %{path: path} do
       config = %{
-        "development" => %{
-          "plans" => %{
-            "basic" => %{
-              "name" => "Basic Plan",
-              "base_plan_id" => nil
-            }
+        "plans" => %{
+          "basic" => %{
+            "name" => "Basic Plan",
+            "sandbox_base_plan_id" => nil,
+            "production_base_plan_id" => nil
           }
-        },
-        "production" => %{
-          "plans" => %{}
         }
       }
 
@@ -76,25 +72,25 @@ defmodule SquareClient.PlansTest do
   describe "get_plan/3" do
     setup %{path: path} do
       config = %{
-        "development" => %{
-          "plans" => %{
-            "premium" => %{
-              "name" => "Premium Plan",
-              "base_plan_id" => "PLAN_123",
-              "variations" => %{
-                "monthly" => %{
-                  "variation_id" => "VAR_MONTHLY",
-                  "amount" => 999
-                },
-                "yearly" => %{
-                  "variation_id" => "VAR_YEARLY",
-                  "amount" => 9900
-                }
+        "plans" => %{
+          "premium" => %{
+            "name" => "Premium Plan",
+            "sandbox_base_plan_id" => "PLAN_123",
+            "production_base_plan_id" => nil,
+            "variations" => %{
+              "monthly" => %{
+                "sandbox_variation_id" => "VAR_MONTHLY",
+                "production_variation_id" => nil,
+                "amount" => 999
+              },
+              "yearly" => %{
+                "sandbox_variation_id" => "VAR_YEARLY",
+                "production_variation_id" => nil,
+                "amount" => 9900
               }
             }
           }
-        },
-        "production" => %{"plans" => %{}}
+        }
       }
 
       File.write!(path, JSON.encode!(config))
@@ -120,20 +116,20 @@ defmodule SquareClient.PlansTest do
   describe "get_variation/4" do
     setup %{path: path} do
       config = %{
-        "development" => %{
-          "plans" => %{
-            "premium" => %{
-              "variations" => %{
-                "monthly" => %{
-                  "variation_id" => "VAR_MONTHLY",
-                  "amount" => 999,
-                  "cadence" => "MONTHLY"
-                }
+        "plans" => %{
+          "premium" => %{
+            "sandbox_base_plan_id" => "PLAN_123",
+            "production_base_plan_id" => nil,
+            "variations" => %{
+              "monthly" => %{
+                "sandbox_variation_id" => "VAR_MONTHLY",
+                "production_variation_id" => nil,
+                "amount" => 999,
+                "cadence" => "MONTHLY"
               }
             }
           }
-        },
-        "production" => %{"plans" => %{}}
+        }
       }
 
       File.write!(path, JSON.encode!(config))
@@ -159,17 +155,22 @@ defmodule SquareClient.PlansTest do
   describe "get_variation_id/4" do
     setup %{path: path} do
       config = %{
-        "development" => %{
-          "plans" => %{
-            "premium" => %{
-              "variations" => %{
-                "monthly" => %{"variation_id" => "VAR_123"},
-                "yearly" => %{"variation_id" => nil}
+        "plans" => %{
+          "premium" => %{
+            "sandbox_base_plan_id" => "PLAN_123",
+            "production_base_plan_id" => nil,
+            "variations" => %{
+              "monthly" => %{
+                "sandbox_variation_id" => "VAR_123",
+                "production_variation_id" => nil
+              },
+              "yearly" => %{
+                "sandbox_variation_id" => nil,
+                "production_variation_id" => nil
               }
             }
           }
-        },
-        "production" => %{"plans" => %{}}
+        }
       }
 
       File.write!(path, JSON.encode!(config))
@@ -192,15 +193,13 @@ defmodule SquareClient.PlansTest do
   describe "update_base_plan_id/4" do
     setup %{path: path} do
       config = %{
-        "development" => %{
-          "plans" => %{
-            "premium" => %{
-              "name" => "Premium",
-              "base_plan_id" => nil
-            }
+        "plans" => %{
+          "premium" => %{
+            "name" => "Premium",
+            "sandbox_base_plan_id" => nil,
+            "production_base_plan_id" => nil
           }
-        },
-        "production" => %{"plans" => %{}}
+        }
       }
 
       File.write!(path, JSON.encode!(config))
@@ -214,7 +213,8 @@ defmodule SquareClient.PlansTest do
       {:ok, content} = File.read(path)
       {:ok, config} = JSON.decode(content)
 
-      assert config["development"]["plans"]["premium"]["base_plan_id"] == "NEW_PLAN_ID"
+      # In development environment, it should update sandbox_base_plan_id
+      assert config["plans"]["premium"]["sandbox_base_plan_id"] == "NEW_PLAN_ID"
     end
 
     test "creates nested structure if needed" do
@@ -228,19 +228,19 @@ defmodule SquareClient.PlansTest do
   describe "update_variation_id/5" do
     setup %{path: path} do
       config = %{
-        "development" => %{
-          "plans" => %{
-            "premium" => %{
-              "variations" => %{
-                "monthly" => %{
-                  "amount" => 999,
-                  "variation_id" => nil
-                }
+        "plans" => %{
+          "premium" => %{
+            "sandbox_base_plan_id" => "PLAN_123",
+            "production_base_plan_id" => nil,
+            "variations" => %{
+              "monthly" => %{
+                "amount" => 999,
+                "sandbox_variation_id" => nil,
+                "production_variation_id" => nil
               }
             }
           }
-        },
-        "production" => %{"plans" => %{}}
+        }
       }
 
       File.write!(path, JSON.encode!(config))
@@ -255,8 +255,8 @@ defmodule SquareClient.PlansTest do
       {:ok, content} = File.read(path)
       {:ok, config} = JSON.decode(content)
 
-      variation = config["development"]["plans"]["premium"]["variations"]["monthly"]
-      assert variation["variation_id"] == "VAR_NEW"
+      variation = config["plans"]["premium"]["variations"]["monthly"]
+      assert variation["sandbox_variation_id"] == "VAR_NEW"
       # Ensure other fields preserved
       assert variation["amount"] == 999
     end
@@ -277,24 +277,32 @@ defmodule SquareClient.PlansTest do
 
     test "returns true when all plans and variations have IDs", %{path: path} do
       config = %{
-        "development" => %{
-          "plans" => %{
-            "premium" => %{
-              "base_plan_id" => "PLAN_123",
-              "variations" => %{
-                "monthly" => %{"variation_id" => "VAR_1"},
-                "yearly" => %{"variation_id" => "VAR_2"}
+        "plans" => %{
+          "premium" => %{
+            "sandbox_base_plan_id" => "PLAN_123",
+            "production_base_plan_id" => nil,
+            "variations" => %{
+              "monthly" => %{
+                "sandbox_variation_id" => "VAR_1",
+                "production_variation_id" => nil
+              },
+              "yearly" => %{
+                "sandbox_variation_id" => "VAR_2",
+                "production_variation_id" => nil
               }
-            },
-            "basic" => %{
-              "base_plan_id" => "PLAN_456",
-              "variations" => %{
-                "monthly" => %{"variation_id" => "VAR_3"}
+            }
+          },
+          "basic" => %{
+            "sandbox_base_plan_id" => "PLAN_456",
+            "production_base_plan_id" => nil,
+            "variations" => %{
+              "monthly" => %{
+                "sandbox_variation_id" => "VAR_3",
+                "production_variation_id" => nil
               }
             }
           }
-        },
-        "production" => %{"plans" => %{}}
+        }
       }
 
       File.write!(path, JSON.encode!(config))
@@ -304,17 +312,18 @@ defmodule SquareClient.PlansTest do
 
     test "returns false when base plan ID missing", %{path: path} do
       config = %{
-        "development" => %{
-          "plans" => %{
-            "premium" => %{
-              "base_plan_id" => nil,
-              "variations" => %{
-                "monthly" => %{"variation_id" => "VAR_1"}
+        "plans" => %{
+          "premium" => %{
+            "sandbox_base_plan_id" => nil,
+            "production_base_plan_id" => nil,
+            "variations" => %{
+              "monthly" => %{
+                "sandbox_variation_id" => "VAR_1",
+                "production_variation_id" => nil
               }
             }
           }
-        },
-        "production" => %{"plans" => %{}}
+        }
       }
 
       File.write!(path, JSON.encode!(config))
@@ -324,18 +333,22 @@ defmodule SquareClient.PlansTest do
 
     test "returns false when variation ID missing", %{path: path} do
       config = %{
-        "development" => %{
-          "plans" => %{
-            "premium" => %{
-              "base_plan_id" => "PLAN_123",
-              "variations" => %{
-                "monthly" => %{"variation_id" => "VAR_1"},
-                "yearly" => %{"variation_id" => nil}
+        "plans" => %{
+          "premium" => %{
+            "sandbox_base_plan_id" => "PLAN_123",
+            "production_base_plan_id" => nil,
+            "variations" => %{
+              "monthly" => %{
+                "sandbox_variation_id" => "VAR_1",
+                "production_variation_id" => nil
+              },
+              "yearly" => %{
+                "sandbox_variation_id" => nil,
+                "production_variation_id" => nil
               }
             }
           }
-        },
-        "production" => %{"plans" => %{}}
+        }
       }
 
       File.write!(path, JSON.encode!(config))
@@ -345,8 +358,7 @@ defmodule SquareClient.PlansTest do
 
     test "returns true for empty plans", %{path: path} do
       config = %{
-        "development" => %{"plans" => %{}},
-        "production" => %{"plans" => %{}}
+        "plans" => %{}
       }
 
       File.write!(path, JSON.encode!(config))
@@ -358,26 +370,34 @@ defmodule SquareClient.PlansTest do
   describe "unconfigured_items/2" do
     test "identifies plans and variations needing creation", %{path: path} do
       config = %{
-        "development" => %{
-          "plans" => %{
-            "premium" => %{
-              "name" => "Premium",
-              "base_plan_id" => nil,
-              "variations" => %{
-                "monthly" => %{"variation_id" => nil},
-                "yearly" => %{"variation_id" => "VAR_EXIST"}
+        "plans" => %{
+          "premium" => %{
+            "name" => "Premium",
+            "sandbox_base_plan_id" => nil,
+            "production_base_plan_id" => nil,
+            "variations" => %{
+              "monthly" => %{
+                "sandbox_variation_id" => nil,
+                "production_variation_id" => nil
+              },
+              "yearly" => %{
+                "sandbox_variation_id" => "VAR_EXIST",
+                "production_variation_id" => nil
               }
-            },
-            "basic" => %{
-              "name" => "Basic",
-              "base_plan_id" => "PLAN_BASIC",
-              "variations" => %{
-                "monthly" => %{"variation_id" => nil}
+            }
+          },
+          "basic" => %{
+            "name" => "Basic",
+            "sandbox_base_plan_id" => "PLAN_BASIC",
+            "production_base_plan_id" => nil,
+            "variations" => %{
+              "monthly" => %{
+                "sandbox_variation_id" => nil,
+                "production_variation_id" => nil
               }
             }
           }
-        },
-        "production" => %{"plans" => %{}}
+        }
       }
 
       File.write!(path, JSON.encode!(config))
