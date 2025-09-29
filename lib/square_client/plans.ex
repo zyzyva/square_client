@@ -8,6 +8,42 @@ defmodule SquareClient.Plans do
   """
 
   @doc """
+  Get all one-time purchases for the current environment.
+
+  ## Parameters
+
+    * `app` - The application atom
+    * `config_path` - Path to the config file (default: "square_plans.json")
+
+  ## Examples
+
+      SquareClient.Plans.get_one_time_purchases(:my_app)
+  """
+  def get_one_time_purchases(app, config_path \\ "square_plans.json") do
+    env = environment(app)
+    config = load_config(app, config_path)
+
+    case config[env]["one_time_purchases"] do
+      nil -> %{}
+      purchases -> purchases
+    end
+  end
+
+  @doc """
+  Get a specific one-time purchase by key.
+
+  ## Parameters
+
+    * `app` - The application atom
+    * `purchase_key` - The purchase identifier
+    * `config_path` - Path to the config file (default: "square_plans.json")
+  """
+  def get_one_time_purchase(app, purchase_key, config_path \\ "square_plans.json") do
+    purchases = get_one_time_purchases(app, config_path)
+    purchases[to_string(purchase_key)]
+  end
+
+  @doc """
   Get all plan configurations for the current environment.
 
   ## Parameters
