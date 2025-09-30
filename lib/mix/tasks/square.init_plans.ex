@@ -64,70 +64,86 @@ defmodule Mix.Tasks.Square.InitPlans do
   end
 
   defp add_example_config(app, config_path) do
-    # Add an example plan structure
+    # Add an example plan structure with unified environment handling
     example_config = %{
-      "development" => %{
-        "plans" => %{
-          "basic" => %{
-            "name" => "Basic Plan",
-            "description" => "Essential features for individuals",
-            "base_plan_id" => nil,
-            "variations" => %{
-              "weekly" => %{
-                "name" => "Weekly",
-                "amount" => 350,
-                "currency" => "USD",
-                "cadence" => "WEEKLY",
-                "variation_id" => nil
-              },
-              "monthly" => %{
-                "name" => "Monthly",
-                "amount" => 999,
-                "currency" => "USD",
-                "cadence" => "MONTHLY",
-                "variation_id" => nil
-              },
-              "yearly" => %{
-                "name" => "Annual (Save 17%)",
-                "amount" => 9900,
-                "currency" => "USD",
-                "cadence" => "ANNUAL",
-                "variation_id" => nil
-              }
-            }
-          },
-          "premium" => %{
-            "name" => "Premium Plan",
-            "description" => "Advanced features for teams",
-            "base_plan_id" => nil,
-            "variations" => %{
-              "weekly" => %{
-                "name" => "Weekly",
-                "amount" => 1050,
-                "currency" => "USD",
-                "cadence" => "WEEKLY",
-                "variation_id" => nil
-              },
-              "monthly" => %{
-                "name" => "Monthly",
-                "amount" => 2999,
-                "currency" => "USD",
-                "cadence" => "MONTHLY",
-                "variation_id" => nil
-              },
-              "yearly" => %{
-                "name" => "Annual (Save 17%)",
-                "amount" => 29900,
-                "currency" => "USD",
-                "cadence" => "ANNUAL",
-                "variation_id" => nil
-              }
+      "plans" => %{
+        "free" => %{
+          "name" => "Free",
+          "description" => "Basic features for getting started",
+          "type" => "free",
+          "active" => true,
+          "price" => "$0",
+          "price_cents" => 0,
+          "features" => [
+            "5 items per month",
+            "Basic support",
+            "Community access"
+          ]
+        },
+        "premium" => %{
+          "name" => "Premium",
+          "description" => "Professional features for power users",
+          "type" => "subscription",
+          "sandbox_base_plan_id" => nil,
+          "production_base_plan_id" => nil,
+          "variations" => %{
+            "monthly" => %{
+              "name" => "Monthly",
+              "amount" => 999,
+              "currency" => "USD",
+              "cadence" => "MONTHLY",
+              "sandbox_variation_id" => nil,
+              "production_variation_id" => nil,
+              "active" => true,
+              "price" => "$9.99/mo",
+              "price_cents" => 999,
+              "auto_renews" => true,
+              "billing_notice" => "Billed monthly, auto-renews until cancelled",
+              "features" => [
+                "Unlimited items",
+                "Priority support",
+                "API access",
+                "Advanced analytics"
+              ]
+            },
+            "yearly" => %{
+              "name" => "Annual",
+              "amount" => 9900,
+              "currency" => "USD",
+              "cadence" => "ANNUAL",
+              "sandbox_variation_id" => nil,
+              "production_variation_id" => nil,
+              "active" => true,
+              "price" => "$99/year",
+              "price_cents" => 9900,
+              "auto_renews" => true,
+              "billing_notice" => "Billed annually, save $20",
+              "features" => [
+                "Everything in monthly",
+                "Save $20 per year",
+                "Early access to features"
+              ]
             }
           }
         }
       },
-      "production" => %{
-        "plans" => %{}
+      "one_time_purchases" => %{
+        "week_pass" => %{
+          "active" => true,
+          "name" => "7-Day Pass",
+          "description" => "Try premium features for a week",
+          "price" => "$4.99",
+          "price_cents" => 499,
+          "duration_days" => 7,
+          "auto_renews" => false,
+          "billing_notice" => "One-time payment, NO auto-renewal",
+          "features" => [
+            "7 days unlimited access",
+            "All premium features",
+            "No recurring charges",
+            "Perfect for events"
+          ]
+        }
       }
     }
 
@@ -138,10 +154,17 @@ defmodule Mix.Tasks.Square.InitPlans do
     formatted = format_json(content)
     File.write!(path, formatted)
 
-    IO.puts("\n📝 Added example subscription plans:")
-    IO.puts("   - Basic Plan: $3.50/week, $9.99/month, $99/year")
-    IO.puts("   - Premium Plan: $10.50/week, $29.99/month, $299/year")
+    IO.puts("\n📝 Added example payment plans:")
+    IO.puts("   - Free: $0 (basic features)")
+    IO.puts("   - Premium Monthly: $9.99/month (auto-renews)")
+    IO.puts("   - Premium Annual: $99/year (save $20)")
+    IO.puts("   - 7-Day Pass: $4.99 (one-time purchase)")
     IO.puts("\nCustomize these plans in the configuration file.")
+    IO.puts("\n✨ Key features:")
+    IO.puts("   - Unified structure for all environments")
+    IO.puts("   - Separate IDs for sandbox and production")
+    IO.puts("   - Support for both subscriptions and one-time purchases")
+    IO.puts("\nSee JSON_PLANS.md for full documentation.")
   end
 
   # Basic JSON formatting for readability

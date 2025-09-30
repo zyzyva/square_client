@@ -1,6 +1,8 @@
 defmodule Mix.Tasks.Square.SetupPlans do
   @moduledoc """
-  Set up Square subscription plans using the recommended pattern:
+  Set up Square subscription plans in the SANDBOX environment.
+
+  Uses Square's recommended pattern:
   - Base plans (what you're selling)
   - Variations (how it's sold - monthly, yearly, etc.)
 
@@ -13,14 +15,16 @@ defmodule Mix.Tasks.Square.SetupPlans do
     --app       Optional. The application atom (defaults to current app)
     --config    Optional. Path to config file (default: square_plans.json)
 
-  This will create the subscription plans and variations in your Square account
-  and update the configuration file with the generated IDs.
+  This will create the subscription plans and variations in your Square SANDBOX account
+  and update the configuration file with the sandbox IDs.
+
+  For production setup, use: mix square.setup_production
   """
   use Mix.Task
 
   alias SquareClient.{Plans, Catalog}
 
-  @shortdoc "Create subscription plans and variations in Square"
+  @shortdoc "Create subscription plans in Square SANDBOX environment"
 
   @switches [
     app: :string,
@@ -35,7 +39,7 @@ defmodule Mix.Tasks.Square.SetupPlans do
 
     Mix.Task.run("app.start")
 
-    IO.puts("Setting up Square subscription plans...")
+    IO.puts("Setting up Square SANDBOX subscription plans...")
     IO.puts("Using Square's recommended pattern: base plans with variations\n")
 
     # Load plans from JSON config
@@ -64,11 +68,12 @@ defmodule Mix.Tasks.Square.SetupPlans do
       IO.puts("")
     end)
 
-    IO.puts("\n✅ Setup complete!")
+    IO.puts("\n✅ Sandbox setup complete!")
     IO.puts("\nNext steps:")
     IO.puts("1. Verify plans: mix square.list_plans --app #{app}")
-    IO.puts("2. Commit the updated configuration to version control")
-    IO.puts("3. Use variation IDs in your subscription code")
+    IO.puts("2. Test thoroughly in sandbox")
+    IO.puts("3. When ready for production: mix square.setup_production --app #{app}")
+    IO.puts("4. Commit the updated configuration to version control")
   end
 
   defp get_app(nil) do
@@ -82,8 +87,9 @@ defmodule Mix.Tasks.Square.SetupPlans do
   end
 
   defp ensure_base_plan(app, plan_key, plan_config, config_path) do
+    # Check for sandbox ID (after environment transformation)
     if plan_config["base_plan_id"] do
-      IO.puts("   ✓ Base plan already exists: #{plan_config["base_plan_id"]}")
+      IO.puts("   ✓ Sandbox base plan already exists: #{plan_config["base_plan_id"]}")
       plan_config["base_plan_id"]
     else
       IO.puts("   📝 Creating base plan...")
@@ -93,7 +99,7 @@ defmodule Mix.Tasks.Square.SetupPlans do
              description: plan_config["description"]
            }) do
         {:ok, result} ->
-          IO.puts("   ✅ Created base plan: #{result.plan_id}")
+          IO.puts("   ✅ Created sandbox base plan: #{result.plan_id}")
 
           # Save to config
           Plans.update_base_plan_id(app, plan_key, result.plan_id, config_path)
@@ -111,7 +117,7 @@ defmodule Mix.Tasks.Square.SetupPlans do
     Enum.each(plan_config["variations"] || %{}, fn {variation_key, variation_config} ->
       if variation_config["variation_id"] do
         IO.puts(
-          "   ✓ Variation '#{variation_config["name"]}' already exists: #{variation_config["variation_id"]}"
+          "   ✓ Sandbox variation '#{variation_config["name"]}' already exists: #{variation_config["variation_id"]}"
         )
       else
         IO.puts("   📝 Creating variation: #{variation_config["name"]}")
@@ -124,7 +130,7 @@ defmodule Mix.Tasks.Square.SetupPlans do
                currency: variation_config["currency"]
              }) do
           {:ok, result} ->
-            IO.puts("   ✅ Created variation: #{result.variation_id}")
+            IO.puts("   ✅ Created sandbox variation: #{result.variation_id}")
 
             # Save to config
             Plans.update_variation_id(

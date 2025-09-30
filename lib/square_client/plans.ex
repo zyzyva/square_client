@@ -388,19 +388,23 @@ defmodule SquareClient.Plans do
   end
 
   defp environment(app) do
-    # First check app-specific environment config
+    # Check app-specific environment config first
+    # This allows each Phoenix app to configure its environment in config/*.exs files
+    # DO NOT use Mix.env() as it's not available in releases!
     env =
-      Application.get_env(app, :environment) ||
-        Application.get_env(app, :env) ||
-        Mix.env()
+      Application.get_env(app, :square_environment) ||
+        Application.get_env(:square_client, :environment) ||
+        System.get_env("SQUARE_ENVIRONMENT") ||
+        "sandbox"
 
     case env do
-      :dev -> "development"
-      :prod -> "production"
+      :sandbox -> "sandbox"
+      "sandbox" -> "sandbox"
       :production -> "production"
-      # Use dev config for tests
-      :test -> "development"
-      _ -> "development"
+      "production" -> "production"
+      "prod" -> "production"
+      # Default to sandbox for safety
+      _ -> "sandbox"
     end
   end
 

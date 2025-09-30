@@ -4,15 +4,19 @@ A flexible Elixir client library for Square API integration, focused on subscrip
 
 ## Documentation
 
+- 💳 [JSON-Driven Payment Plans](JSON_PLANS.md) - Complete guide for JSON-based plan management
+- 🚀 [Multi-App Payments](MULTI_APP_PAYMENTS.md) - Strategy for multiple apps sharing Square
 - 📖 [Webhook Integration Guide](WEBHOOK.md) - Complete guide for webhook implementation
 - 📝 [Changelog](CHANGELOG.md) - Version history and changes
 - 🧪 [Test Cards](TEST_CARDS.md) - Test credit card numbers for sandbox
 
 ## Features
 
+- **JSON-driven payment plans** - Manage plans and pricing without code changes
 - **Direct Square API integration** - No proxy service or message queue required
 - **Webhook handling infrastructure** - Standardized webhook processing with signature verification
 - **Subscription plan and variation management** - Following Square's recommended patterns
+- **One-time purchase support** - Sell passes and time-limited access
 - **Synchronous REST API** - Immediate feedback for payment processing
 - **Environment-aware configuration** - Automatic sandbox/production switching
 - **Comprehensive test coverage** - Fast (0.1s), clean tests with mocked API calls
@@ -37,12 +41,13 @@ SquareClient supports flexible configuration with clear precedence:
 
 ### API Key Management
 
-**Single Set of Keys (Recommended)**
-Most organizations should use one Square account across all apps:
+**Single Set of Keys with Separate Plans (Recommended)**
+Use one Square account across all apps with app-specific plans:
 - Single business entity with multiple applications
 - All payments go to one bank account
-- Simpler Square dashboard management
-- Easier reconciliation and reporting
+- Each app maintains its own subscription plans with unique IDs
+- Clear attribution through plan naming and reference IDs
+- See [MULTI_APP_PAYMENTS.md](MULTI_APP_PAYMENTS.md) for implementation details
 
 **Multiple Sets of Keys**
 Only needed when:
@@ -92,16 +97,14 @@ config :square_client,
   disable_retries: true  # Faster test execution
 ```
 
-### Method 2: Environment Variables
+### Method 2: Environment Variables (Optional Fallback)
 
-Set these environment variables:
+For deployments where you can't modify config files, set these environment variables:
 
 - `SQUARE_ACCESS_TOKEN` - Your Square API access token (required)
-- `SQUARE_ENVIRONMENT` - Controls API endpoint selection:
-  - `"production"` - Uses Square production API
-  - `"sandbox"` (default) - Uses Square sandbox API
-  - `"test"` - Uses test URL (for mocking)
-- `SQUARE_API_TEST_URL` - Custom URL for test environment
+- `SQUARE_ENVIRONMENT` - Controls which plan IDs to use:
+  - `"production"` - Uses production plan IDs
+  - `"sandbox"` (default) - Uses sandbox plan IDs
 - `SQUARE_APPLICATION_ID` - Your Square application ID
 - `SQUARE_LOCATION_ID` - Your Square location ID
 
@@ -113,9 +116,27 @@ export SQUARE_APPLICATION_ID="YOUR_APP_ID"
 export SQUARE_LOCATION_ID="YOUR_LOCATION_ID"
 ```
 
+**Note:** Application config takes precedence over environment variables.
+
 ## Usage
 
-### Managing Subscription Plans
+### JSON-Driven Payment Plans (Recommended)
+
+The library includes a complete JSON-driven payment system. See [JSON_PLANS.md](JSON_PLANS.md) for full documentation.
+
+**Quick Start:**
+```bash
+# Initialize plans configuration
+mix square.init_plans --app my_app
+
+# Edit priv/square_plans.json to define your plans
+
+# Use in your LiveView
+alias SquareClient.Plans.Formatter
+plans = Formatter.get_subscription_plans(:my_app)
+```
+
+### Managing Subscription Plans (Programmatic API)
 
 Square recommends using base plans with variations for different billing periods. This allows better catalog organization and pricing flexibility.
 
