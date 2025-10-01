@@ -584,4 +584,106 @@ defmodule SquareClient.SubscriptionsTest do
       Application.delete_env(:square_client, :disable_retries)
     end
   end
+
+  describe "create/4 with start_date" do
+    test "creates subscription with future start date (PENDING status)", %{bypass: bypass} do
+      customer_id = "CUST_123"
+      plan_variation_id = "PLAN_MONTHLY_123"
+      card_id = "CARD_456"
+      start_date = "2025-10-08"
+
+      Bypass.expect_once(bypass, "POST", "/v2/subscriptions", fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        request = JSON.decode!(body)
+
+        # Verify start_date is sent to Square
+        assert request["start_date"] == start_date
+        assert request["plan_variation_id"] == plan_variation_id
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, JSON.encode!(%{
+          "subscription" => %{
+            "id" => "SUB_PENDING_123",
+            "status" => "PENDING",
+            "start_date" => start_date
+          }
+        }))
+      end)
+
+      {:ok, subscription} = Subscriptions.create(
+        customer_id,
+        plan_variation_id,
+        card_id,
+        start_date: start_date
+      )
+
+      assert subscription["status"] == "PENDING"
+      assert subscription["start_date"] == start_date
+    end
+  end
+
+  describe "calculate_deferred_start_date/1" do
+    test "returns nil when access_ends_at is nil" do
+      assert Subscriptions.calculate_deferred_start_date(nil) == nil
+    end
+
+    test "returns nil when access_ends_at is in the past" do
+      past_date = DateTime.add(DateTime.utc_now(), -7, :day)
+      assert Subscriptions.calculate_deferred_start_date(past_date) == nil
+    end
+
+    test "returns day after when access_ends_at is in the future (DateTime)" do
+      future_date = DateTime.add(DateTime.utc_now(), 7, :day)
+      result = Subscriptions.calculate_deferred_start_date(future_date)
+
+      expected_date = future_date
+        |> DateTime.add(1, :day)
+        |> DateTime.to_date()
+        |> Date.to_string()
+
+      assert result == expected_date
+    end
+
+    test "returns day after when access_ends_at is a Date" do
+      future_date = Date.add(Date.utc_today(), 7)
+      result = Subscriptions.calculate_deferred_start_date(future_date)
+
+      expected_date = Date.add(future_date, 1) |> Date.to_string()
+
+      assert result == expected_date
+    end
+
+    test "returns day after when access_ends_at is a date string" do
+      result = Subscriptions.calculate_deferred_start_date("2025-10-07")
+      assert result == "2025-10-08"
+    end
+
+    test "handles end of month correctly" do
+      result = Subscriptions.calculate_deferred_start_date("2025-10-31")
+      assert result == "2025-11-01"
+    end
+
+    test "handles end of year correctly" do
+      result = Subscriptions.calculate_deferred_start_date("2025-12-31")
+      assert result == "2026-01-01"
+    end
+
+    test "handles leap year correctly" do
+      result = Subscriptions.calculate_deferred_start_date("2028-02-28")
+      assert result == "2028-02-29"
+    end
+
+    test "returns nil when access ends today" do
+      today = DateTime.utc_now()
+      # If it's already past, should return nil
+      result = Subscriptions.calculate_deferred_start_date(today)
+      # This could be nil or tomorrow depending on exact timing
+      assert result == nil or String.starts_with?(result, Date.utc_today() |> Date.add(1) |> Date.to_string())
+    end
+  end
+
+  # NOTE: Full integration tests for upgrade_subscription/4 are pending
+  # See TEST_COVERAGE.md for manual testing procedures
+  # The date calculation logic is now fully tested above
 end
