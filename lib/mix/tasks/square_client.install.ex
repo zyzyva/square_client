@@ -13,29 +13,37 @@ defmodule Mix.Tasks.SquareClient.Install do
 
   ## Usage
 
-      mix square_client.install --owner-module MyApp.Accounts.User
+      # Auto-detect everything (recommended for Phoenix gen.auth apps)
+      mix igniter.install square_client
+
+      # Or run the task directly
+      mix square_client.install
+
+  ## Auto-Detection
+
+  The installer automatically detects:
+
+    * **App module prefix** - From your application name (e.g., `Contacts4us`)
+    * **Owner module** - Defaults to `AppName.Accounts.User` (Phoenix gen.auth convention)
+    * **Owner key** - Defaults to `:user_id`
 
   ## Options
 
-    * `--owner-module` - The module that owns subscriptions (e.g., User, Account).
-      Defaults to detecting from existing authentication setup.
+  All options are optional and only needed for non-standard setups:
 
-    * `--owner-key` - The foreign key name (default: derives from owner module).
-      For User, this would be :user_id
+    * `--owner-module` - Override the owner module
+      Default: `YourApp.Accounts.User`
 
-    * `--module-prefix` - The application module prefix (default: auto-detected).
-      Example: For MyApp, use `MyApp`
+    * `--owner-key` - Override the foreign key name
+      Default: Derived from owner module (`:user_id` for User)
 
   ## Examples
 
-      # Auto-detect settings
-      mix square_client.install
+      # Standard Phoenix gen.auth app (auto-detects everything)
+      mix igniter.install square_client
 
-      # Specify owner module
-      mix square_client.install --owner-module MyApp.Accounts.User
-
-      # Full customization
-      mix square_client.install --owner-module MyApp.Accounts.User --owner-key user_id
+      # Custom owner module
+      mix square_client.install --owner-module MyApp.Organizations.Account
   """
   use Igniter.Mix.Task
 
@@ -53,8 +61,12 @@ defmodule Mix.Tasks.SquareClient.Install do
 
   @impl Igniter.Mix.Task
   def igniter(igniter) do
-    owner_module = get_option(igniter, :owner_module)
     module_prefix = get_module_prefix(igniter)
+
+    # Auto-detect owner module (Phoenix gen.auth default)
+    owner_module = get_option(igniter, :owner_module) ||
+                   Module.concat([module_prefix, "Accounts", "User"])
+
     owner_key = get_option(igniter, :owner_key) || derive_owner_key(owner_module)
 
     igniter
