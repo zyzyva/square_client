@@ -18,22 +18,28 @@ defmodule SquareClient do
 
   - **Direct API integration** - No proxy service or message queue required
   - **Synchronous operations** - Immediate feedback for payment processing
-  - **Environment-aware** - Automatic sandbox/production switching
-  - **Flexible configuration** - Application config, environment variables, or defaults
+  - **Environment-aware** - Use provided helper functions in your config
+  - **Minimal configuration** - Only requires access token and location ID
   - **Comprehensive catalog management** - Base plans with pricing variations
 
   ## Configuration
 
-  Configure in your app's config files:
+  Configure in your app's config files. Use the URLs defined in this module:
 
+      # config/dev.exs and config/test.exs
       config :square_client,
         api_url: "https://connect.squareupsandbox.com/v2",
-        access_token: System.get_env("SQUARE_ACCESS_TOKEN")
+        access_token: System.get_env("SQUARE_ACCESS_TOKEN"),
+        location_id: System.get_env("SQUARE_LOCATION_ID")
 
-  Or use environment variables:
-  - `SQUARE_ACCESS_TOKEN` - Your Square API access token
-  - `SQUARE_ENVIRONMENT` - "production" or "sandbox" (default)
-  - `SQUARE_LOCATION_ID` - Your Square location ID
+      # config/prod.exs
+      config :square_client,
+        api_url: "https://connect.squareup.com/v2",
+        access_token: System.get_env("SQUARE_ACCESS_TOKEN"),
+        location_id: System.get_env("SQUARE_LOCATION_ID")
+
+  The `sandbox_api_url/0` and `production_api_url/0` functions are provided
+  for reference and runtime use, but cannot be used directly in config files.
   """
 
   @doc """
@@ -42,4 +48,20 @@ defmodule SquareClient do
   def version do
     "0.1.0"
   end
+
+  @doc """
+  Returns the Square sandbox API URL for development and testing.
+
+  This function is provided for reference and runtime use. In config files,
+  use the string directly: `"https://connect.squareupsandbox.com/v2"`
+  """
+  def sandbox_api_url, do: "https://connect.squareupsandbox.com/v2"
+
+  @doc """
+  Returns the Square production API URL.
+
+  This function is provided for reference and runtime use. In config files,
+  use the string directly: `"https://connect.squareup.com/v2"`
+  """
+  def production_api_url, do: "https://connect.squareup.com/v2"
 end

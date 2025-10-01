@@ -21,21 +21,10 @@ defmodule SquareClient.Catalog do
     ]
   end
 
-  # Get API URL from config or environment
+  # Get API URL from config
   defp api_url do
-    case Application.get_env(:square_client, :api_url) do
-      nil ->
-        # Only fall back to environment variables if not explicitly set to nil
-        # This prevents tests from accidentally using real APIs
-        case System.get_env("SQUARE_ENVIRONMENT") do
-          "test" -> raise "Square API URL must be configured in test environment"
-          "production" -> "https://connect.squareup.com/v2"
-          _ -> "https://connect.squareupsandbox.com/v2"
-        end
-
-      url ->
-        url
-    end
+    Application.get_env(:square_client, :api_url) ||
+      raise "Square API URL must be configured. Use \"https://connect.squareupsandbox.com/v2\" or \"https://connect.squareup.com/v2\""
   end
 
   defp access_token do
