@@ -104,6 +104,7 @@ defmodule Mix.Tasks.Square.SetupProduction do
         show_production_config(plan_configs)
       else
         IO.puts("\n📋 Plans needing production setup:")
+
         Enum.each(production_plans, fn {plan_key, plan_config} ->
           IO.puts("  - #{plan_config["name"]} (#{plan_key})")
 
@@ -133,7 +134,13 @@ defmodule Mix.Tasks.Square.SetupProduction do
 
             # Create variations if base plan exists
             if production_base_id && plan_config["variations"] do
-              create_production_variations(app, plan_key, plan_config, production_base_id, config_path)
+              create_production_variations(
+                app,
+                plan_key,
+                plan_config,
+                production_base_id,
+                config_path
+              )
             end
           end)
 
@@ -143,7 +150,6 @@ defmodule Mix.Tasks.Square.SetupProduction do
           IO.puts("\n📋 Dry run complete. Run without --dry-run to create these plans.")
         end
       end
-
     after
       # Always restore original config
       if original_api_url, do: Application.put_env(:square_client, :api_url, original_api_url)
@@ -173,14 +179,14 @@ defmodule Mix.Tasks.Square.SetupProduction do
     plan_configs
     |> Enum.filter(fn {_key, config} ->
       # Skip free plans
+      # Check if base plan needs production ID
+      # Or if any variations need production IDs
       config["type"] != "free" &&
-        # Check if base plan needs production ID
         (!config["production_base_plan_id"] ||
-         # Or if any variations need production IDs
-         (config["variations"] &&
-          Enum.any?(config["variations"], fn {_var_key, var} ->
-            !var["production_variation_id"]
-          end)))
+           (config["variations"] &&
+              Enum.any?(config["variations"], fn {_var_key, var} ->
+                !var["production_variation_id"]
+              end)))
     end)
     |> Enum.into(%{})
   end
@@ -271,7 +277,10 @@ defmodule Mix.Tasks.Square.SetupProduction do
     updated_config =
       config
       |> ensure_variation_exists(plan_key, variation_key)
-      |> put_in(["plans", plan_key, "variations", variation_key, "production_variation_id"], variation_id)
+      |> put_in(
+        ["plans", plan_key, "variations", variation_key, "production_variation_id"],
+        variation_id
+      )
 
     save_config(app, updated_config, config_path)
   end
@@ -285,6 +294,7 @@ defmodule Mix.Tasks.Square.SetupProduction do
           {:ok, config} -> config
           {:error, _} -> %{"plans" => %{}, "one_time_purchases" => %{}}
         end
+
       {:error, _} ->
         %{"plans" => %{}, "one_time_purchases" => %{}}
     end
@@ -328,9 +338,13 @@ defmodule Mix.Tasks.Square.SetupProduction do
   defp ensure_variation_exists(config, plan_key, variation_key) do
     config
     |> ensure_plan_exists(plan_key)
-    |> put_in(["plans", plan_key, "variations"],
-              config["plans"][plan_key]["variations"] || %{})
-    |> put_in(["plans", plan_key, "variations", variation_key],
-              config["plans"][plan_key]["variations"][variation_key] || %{})
+    |> put_in(
+      ["plans", plan_key, "variations"],
+      config["plans"][plan_key]["variations"] || %{}
+    )
+    |> put_in(
+      ["plans", plan_key, "variations", variation_key],
+      config["plans"][plan_key]["variations"][variation_key] || %{}
+    )
   end
 end

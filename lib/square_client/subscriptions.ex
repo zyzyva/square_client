@@ -130,6 +130,15 @@ defmodule SquareClient.Subscriptions do
         Logger.error("Card declined: #{message}")
         {:error, {:card_declined, message}}
 
+      {:error, {:card_save_failed, reason}} ->
+        Logger.error("Failed to save card: #{inspect(reason)}")
+        {:error, {:card_save_failed, reason}}
+
+      {:error, message} when is_binary(message) ->
+        # API error with detail message from Square
+        Logger.error("Square API error: #{message}")
+        {:error, message}
+
       {:error, reason} ->
         Logger.error("Failed to create subscription: #{inspect(reason)}")
         {:error, :subscription_failed}
