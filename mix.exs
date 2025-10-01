@@ -30,6 +30,7 @@ defmodule SquareClient.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
+      {:square_client, [github: "zyzyva/square_client#move_contacts_code", override: true]},
       {:req, "~> 0.5"},
       {:plug, "~> 1.16", optional: true},
       {:plug_crypto, "~> 2.0"},
