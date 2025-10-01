@@ -35,10 +35,8 @@ defmodule Mix.Tasks.SquareClient.Install do
   def info(_argv, _source) do
     %Igniter.Mix.Task.Info{
       group: :square_client,
-      adds_deps: [
-        {:square_client, github: "zyzyva/square_client"}
-      ],
-      installs: [],
+      adds_deps: [],
+      installs: [Mix.Tasks.SquareClient.Install],
       example: "mix igniter.install square_client"
     }
   end
