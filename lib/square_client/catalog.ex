@@ -21,17 +21,9 @@ defmodule SquareClient.Catalog do
     ]
   end
 
-  # Get API URL from config
-  defp api_url do
-    Application.get_env(:square_client, :api_url) ||
-      raise "Square API URL must be configured. Use \"https://connect.squareupsandbox.com/v2\" or \"https://connect.squareup.com/v2\""
-  end
+  defp api_url, do: SquareClient.Config.api_url!()
 
-  defp access_token do
-    # First check Application config, then fall back to env vars
-    Application.get_env(:square_client, :access_token) ||
-      System.get_env("SQUARE_ACCESS_TOKEN")
-  end
+  defp access_token, do: SquareClient.Config.access_token!()
 
   # Configure request options based on environment
   defp request_options do

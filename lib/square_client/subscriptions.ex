@@ -11,20 +11,10 @@ defmodule SquareClient.Subscriptions do
 
   require Logger
 
-  defp api_url do
-    Application.get_env(:square_client, :api_url) ||
-      raise "Square API URL must be configured. Use SquareClient.sandbox_api_url() or SquareClient.production_api_url()"
-  end
+  defp api_url, do: SquareClient.Config.api_url!()
+  defp access_token, do: SquareClient.Config.access_token!()
 
-  defp access_token do
-    Application.get_env(:square_client, :access_token) ||
-      System.get_env("SQUARE_ACCESS_TOKEN")
-  end
-
-  defp location_id do
-    Application.get_env(:square_client, :location_id) ||
-      System.get_env("SQUARE_LOCATION_ID")
-  end
+  defp location_id, do: SquareClient.Config.location_id!()
 
   defp request_headers do
     [
