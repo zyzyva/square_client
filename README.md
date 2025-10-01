@@ -28,44 +28,68 @@ A flexible Elixir client library for Square API integration, focused on subscrip
 
 ## Installation
 
-### Option 1: Automatic Installation with Igniter (Recommended)
+### Quick Setup (Recommended)
 
 The easiest way to add Square integration to your Phoenix app:
 
-```bash
-# Add the dependency and run the installer
-mix igniter.install square_client
+**Step 1: Add the dependency**
 
-# Or with custom owner module
-mix igniter.install square_client --owner-module MyApp.Accounts.User
+```elixir
+# In mix.exs
+def deps do
+  [
+    {:square_client, github: "zyzyva/square_client"}
+  ]
+end
+```
+
+**Step 2: Install the dependency**
+
+```bash
+mix deps.get
+```
+
+**Step 3: Run the installer**
+
+```bash
+mix square_client.install
 ```
 
 This automatically generates:
-- ✅ Square configuration in config files
-- ✅ Subscription schema with your owner module
-- ✅ Database migration
-- ✅ Webhook handler implementation
-- ✅ Webhook controller
-- ✅ Router configuration
-- ✅ Runtime validation in application.ex
+- ✅ Subscription schema (`lib/your_app/payments/subscription.ex`)
+- ✅ Webhook handler implementation (`lib/your_app/payments/square_webhook_handler.ex`)
+- ✅ Webhook controller (`lib/your_app_web/controllers/square_webhook_controller.ex`)
+- ✅ Database migration (`priv/repo/migrations/TIMESTAMP_create_subscriptions.exs`)
+- ✅ Configuration files (`config/config.exs` and `config/prod.exs`)
 
-Then just run the migration and set your environment variables:
+The installer auto-detects your Phoenix app structure and assumes standard `gen.auth` conventions (User module, user_id foreign key).
+
+**Step 4: Complete the manual steps**
+
+After running the installer, you'll see instructions for:
+
+1. Adding runtime validation to `application.ex`
+2. Adding webhook route to `router.ex`
+3. Running the migration
+4. Setting environment variables
+
+**Step 5: Run and configure**
 
 ```bash
 # Run the migration
 mix ecto.migrate
 
 # Set environment variables
-export SQUARE_ACCESS_TOKEN="your_token"
+export SQUARE_ACCESS_TOKEN="your_sandbox_token"
 export SQUARE_LOCATION_ID="your_location_id"
 
 # Start your app
 mix phx.server
 ```
 
-### Option 2: Manual Installation
+### Manual Installation
 
-Add `square_client` to your dependencies in `mix.exs`:
+If you prefer to set everything up yourself, add the dependency:
 
 ```elixir
 def deps do

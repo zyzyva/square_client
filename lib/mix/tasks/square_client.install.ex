@@ -1,101 +1,111 @@
 defmodule Mix.Tasks.SquareClient.Install do
   @moduledoc """
-  Installs SquareClient into a Phoenix application.
-
-  This task generates all the necessary files and configuration for Square
-  subscription management, including:
-
-  - Square client configuration
-  - Subscription schema and migration
-  - Webhook handler implementation
-  - Webhook controller
-  - Router configuration
+  Generates Square subscription management files for a Phoenix application.
 
   ## Usage
 
-      # Auto-detect everything (recommended for Phoenix gen.auth apps)
-      mix igniter.install square_client
+      mix square_client.install
 
-  ## Auto-Detection
+  This task auto-detects your application structure (assumes Phoenix gen.auth)
+  and generates:
 
-  The installer automatically detects:
+  - Subscription schema using library macro
+  - Webhook handler implementation
+  - Webhook controller
+  - Database migration
+  - Configuration files
 
-    * **App module prefix** - From your application name (e.g., `Contacts4us`)
-    * **Owner module** - Defaults to `AppName.Accounts.User` (Phoenix gen.auth convention)
-    * **Owner key** - Defaults to `:user_id`
+  ## What It Generates
 
-  ## Examples
+  Files created:
+  - `lib/your_app/payments/subscription.ex` - Subscription schema
+  - `lib/your_app/payments/square_webhook_handler.ex` - Webhook event handler
+  - `lib/your_app_web/controllers/square_webhook_controller.ex` - Webhook endpoint
+  - `priv/repo/migrations/TIMESTAMP_create_subscriptions.exs` - Database migration
+  - Updates `config/config.exs` with Square configuration
+  - Updates `config/prod.exs` with production URL
 
-      # Standard Phoenix gen.auth app (auto-detects everything)
-      mix igniter.install square_client
+  ## Manual Steps After Running
+
+  1. Add runtime validation to `lib/your_app/application.ex`:
+     ```
+     def start(_type, _args) do
+       SquareClient.Config.validate_runtime!()
+       # ... rest of your children
+     end
+     ```
+
+  2. Add webhook route to `lib/your_app_web/router.ex`:
+     ```
+     pipeline :square_webhook do
+       plug :accepts, ["json"]
+       plug SquareClient.WebhookPlug
+     end
+
+     scope "/webhooks", YourAppWeb do
+       pipe_through :square_webhook
+       post "/square", SquareWebhookController, :handle
+     end
+     ```
+
+  3. Run the migration:
+     ```
+     mix ecto.migrate
+     ```
+
+  4. Set environment variables:
+     ```
+     export SQUARE_ACCESS_TOKEN="your_token"
+     export SQUARE_LOCATION_ID="your_location_id"
+     ```
+
+  ## Options
+
+  This task has no options - it auto-detects everything from your Phoenix app.
+
+  Assumptions:
+  - App follows Phoenix gen.auth conventions
+  - Owner module is `YourApp.Accounts.User`
+  - Foreign key is `:user_id`
+  - Repo module is `YourApp.Repo`
   """
-  use Igniter.Mix.Task
 
-  @impl Igniter.Mix.Task
-  def info(_argv, _source) do
-    %Igniter.Mix.Task.Info{
-      group: :square_client,
-      adds_deps: [],
-      installs: [Mix.Tasks.SquareClient.Install],
-      example: "mix igniter.install square_client"
-    }
-  end
+  use Mix.Task
 
-  @impl Igniter.Mix.Task
-  def igniter(igniter) do
-    app_name = Igniter.Project.Application.app_name(igniter)
+  @shortdoc "Generates Square subscription management files"
+
+  def run(_args) do
+    # Get app information
+    app_name = Mix.Project.config()[:app]
     module_prefix = app_name |> Atom.to_string() |> Macro.camelize()
     owner_module = Module.concat([module_prefix, "Accounts", "User"])
     owner_key = :user_id
-
-    igniter
-    |> add_config(module_prefix)
-    |> create_subscription_schema(module_prefix, owner_module, owner_key)
-    |> create_webhook_handler(module_prefix)
-    |> create_webhook_controller(module_prefix)
-    |> create_migration(owner_key)
-    |> add_validation_to_application(module_prefix)
-  end
-
-  defp add_config(igniter, module_prefix) do
-    webhook_handler = Module.concat([module_prefix, "Payments", "SquareWebhookHandler"])
-
-    igniter
-    |> Igniter.Project.Config.configure(
-      "config.exs",
-      :square_client,
-      [:api_url],
-      "https://connect.squareupsandbox.com/v2"
-    )
-    |> Igniter.Project.Config.configure(
-      "config.exs",
-      :square_client,
-      [:access_token],
-      quote do: System.get_env("SQUARE_ACCESS_TOKEN")
-    )
-    |> Igniter.Project.Config.configure(
-      "config.exs",
-      :square_client,
-      [:location_id],
-      quote do: System.get_env("SQUARE_LOCATION_ID")
-    )
-    |> Igniter.Project.Config.configure(
-      "config.exs",
-      :square_client,
-      [:webhook_handler],
-      webhook_handler
-    )
-    |> Igniter.Project.Config.configure(
-      "prod.exs",
-      :square_client,
-      [:api_url],
-      "https://connect.squareup.com/v2"
-    )
-  end
-
-  defp create_subscription_schema(igniter, module_prefix, owner_module, owner_key) do
-    schema_path = "lib/#{Macro.underscore(module_prefix)}/payments/subscription.ex"
     repo_module = Module.concat([module_prefix, "Repo"])
+
+    Mix.shell().info("Installing SquareClient for #{module_prefix}...")
+
+    # Create directories
+    payments_dir = "lib/#{Macro.underscore(module_prefix)}/payments"
+    File.mkdir_p!(payments_dir)
+
+    controllers_dir = "lib/#{Macro.underscore(module_prefix)}_web/controllers"
+    File.mkdir_p!(controllers_dir)
+
+    # Generate files
+    create_subscription_schema(module_prefix, owner_module, owner_key, repo_module, payments_dir)
+    create_webhook_handler(module_prefix, payments_dir)
+    create_webhook_controller(module_prefix, controllers_dir)
+    create_migration(module_prefix, owner_key)
+    update_config(module_prefix)
+
+    # Print manual steps
+    print_manual_steps(module_prefix)
+
+    Mix.shell().info("\n✅ Square Client installation complete!")
+  end
+
+  defp create_subscription_schema(module_prefix, owner_module, owner_key, repo_module, dir) do
+    path = Path.join(dir, "subscription.ex")
 
     content = """
     defmodule #{module_prefix}.Payments.Subscription do
@@ -121,13 +131,12 @@ defmodule Mix.Tasks.SquareClient.Install do
     end
     """
 
-    Igniter.create_new_file(igniter, schema_path, content)
+    File.write!(path, content)
+    Mix.shell().info("  * Created #{path}")
   end
 
-  defp create_webhook_handler(igniter, module_prefix) do
-    handler_path = "lib/#{Macro.underscore(module_prefix)}/payments/square_webhook_handler.ex"
-    subscription_module = Module.concat([module_prefix, "Payments", "Subscription"])
-    repo_module = Module.concat([module_prefix, "Repo"])
+  defp create_webhook_handler(module_prefix, dir) do
+    path = Path.join(dir, "square_webhook_handler.ex")
 
     content = """
     defmodule #{module_prefix}.Payments.SquareWebhookHandler do
@@ -140,8 +149,8 @@ defmodule Mix.Tasks.SquareClient.Install do
 
       @behaviour SquareClient.WebhookHandler
 
-      alias #{inspect(subscription_module)}
-      alias #{inspect(repo_module)}
+      alias #{module_prefix}.Payments.Subscription
+      alias #{module_prefix}.Repo
 
       require Logger
 
@@ -201,11 +210,12 @@ defmodule Mix.Tasks.SquareClient.Install do
     end
     """
 
-    Igniter.create_new_file(igniter, handler_path, content)
+    File.write!(path, content)
+    Mix.shell().info("  * Created #{path}")
   end
 
-  defp create_webhook_controller(igniter, module_prefix) do
-    controller_path = "lib/#{Macro.underscore(module_prefix)}_web/controllers/square_webhook_controller.ex"
+  defp create_webhook_controller(module_prefix, dir) do
+    path = Path.join(dir, "square_webhook_controller.ex")
 
     content = """
     defmodule #{module_prefix}Web.SquareWebhookController do
@@ -221,18 +231,20 @@ defmodule Mix.Tasks.SquareClient.Install do
     end
     """
 
-    Igniter.create_new_file(igniter, controller_path, content)
+    File.write!(path, content)
+    Mix.shell().info("  * Created #{path}")
   end
 
-  defp create_migration(igniter, owner_key) do
+  defp create_migration(module_prefix, owner_key) do
     timestamp = Calendar.strftime(DateTime.utc_now(), "%Y%m%d%H%M%S")
-    app_name = Igniter.Project.Application.app_name(igniter)
-    migration_path = "priv/repo/migrations/#{timestamp}_create_subscriptions.exs"
+    migrations_dir = "priv/repo/migrations"
+    File.mkdir_p!(migrations_dir)
 
+    path = Path.join(migrations_dir, "#{timestamp}_create_subscriptions.exs")
     owner_table = owner_key |> Atom.to_string() |> String.replace_suffix("_id", "s")
 
     content = """
-    defmodule #{Macro.camelize(Atom.to_string(app_name))}.Repo.Migrations.CreateSubscriptions do
+    defmodule #{module_prefix}.Repo.Migrations.CreateSubscriptions do
       use Ecto.Migration
 
       def change do
@@ -257,19 +269,93 @@ defmodule Mix.Tasks.SquareClient.Install do
     end
     """
 
-    Igniter.create_new_file(igniter, migration_path, content)
+    File.write!(path, content)
+    Mix.shell().info("  * Created #{path}")
   end
 
-  defp add_validation_to_application(igniter, module_prefix) do
-    app_path = "lib/#{Macro.underscore(module_prefix)}/application.ex"
+  defp update_config(module_prefix) do
+    webhook_handler = "#{module_prefix}.Payments.SquareWebhookHandler"
 
-    Igniter.update_elixir_file(igniter, app_path, fn zipper ->
-      # This is simplified - in reality you'd need to find the start/2 function
-      # and inject the validation call. For now, just add a note that it needs manual update.
-      {:ok, zipper}
-    end)
+    # Update config.exs
+    config_path = "config/config.exs"
 
-    # Return igniter with a notice that manual step is needed
-    igniter
+    config_addition = """
+
+    # Square client configuration
+    config :square_client,
+      api_url: "https://connect.squareupsandbox.com/v2",
+      access_token: System.get_env("SQUARE_ACCESS_TOKEN"),
+      location_id: System.get_env("SQUARE_LOCATION_ID"),
+      webhook_handler: #{webhook_handler}
+    """
+
+    if File.exists?(config_path) do
+      existing = File.read!(config_path)
+
+      if String.contains?(existing, ":square_client") do
+        Mix.shell().info("  * Config already contains :square_client - skipping config.exs")
+      else
+        File.write!(config_path, existing <> config_addition)
+        Mix.shell().info("  * Updated #{config_path}")
+      end
+    end
+
+    # Update prod.exs
+    prod_path = "config/prod.exs"
+
+    prod_addition = """
+
+    # Square client production configuration
+    config :square_client,
+      api_url: "https://connect.squareup.com/v2"
+    """
+
+    if File.exists?(prod_path) do
+      existing = File.read!(prod_path)
+
+      if String.contains?(existing, "square_client") && String.contains?(existing, "squareup.com") do
+        Mix.shell().info("  * Config already contains production :square_client - skipping prod.exs")
+      else
+        File.write!(prod_path, existing <> prod_addition)
+        Mix.shell().info("  * Updated #{prod_path}")
+      end
+    end
+  end
+
+  defp print_manual_steps(module_prefix) do
+    Mix.shell().info("""
+
+    📋 Manual Steps Required:
+
+    1. Add runtime validation to lib/#{Macro.underscore(module_prefix)}/application.ex:
+
+       def start(_type, _args) do
+         SquareClient.Config.validate_runtime!()
+         # ... rest of your code
+       end
+
+    2. Add webhook route to lib/#{Macro.underscore(module_prefix)}_web/router.ex:
+
+       pipeline :square_webhook do
+         plug :accepts, ["json"]
+         plug SquareClient.WebhookPlug
+       end
+
+       scope "/webhooks", #{module_prefix}Web do
+         pipe_through :square_webhook
+         post "/square", SquareWebhookController, :handle
+       end
+
+    3. Run the migration:
+
+       mix ecto.migrate
+
+    4. Set environment variables:
+
+       export SQUARE_ACCESS_TOKEN="your_sandbox_token"
+       export SQUARE_LOCATION_ID="your_location_id"
+
+    Get your credentials from: https://developer.squareup.com/apps
+    """)
   end
 end
