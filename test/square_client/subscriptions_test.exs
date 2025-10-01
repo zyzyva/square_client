@@ -584,5 +584,4 @@ defmodule SquareClient.SubscriptionsTest do
       Application.delete_env(:square_client, :disable_retries)
     end
   end
-
 end

@@ -107,6 +107,7 @@ defmodule SquareClient.Plans do
     case get_plan(app, plan_key, config_path) do
       %{"variations" => variations} when is_map(variations) ->
         variations[to_string(variation_key)]
+
       _ ->
         nil
     end
@@ -206,10 +207,14 @@ defmodule SquareClient.Plans do
   defp ensure_variation_exists(config, plan_key, variation_key) do
     config
     |> ensure_plan_exists(plan_key)
-    |> put_in(["plans", plan_key, "variations"],
-              config["plans"][plan_key]["variations"] || %{})
-    |> put_in(["plans", plan_key, "variations", variation_key],
-              config["plans"][plan_key]["variations"][variation_key] || %{})
+    |> put_in(
+      ["plans", plan_key, "variations"],
+      config["plans"][plan_key]["variations"] || %{}
+    )
+    |> put_in(
+      ["plans", plan_key, "variations", variation_key],
+      config["plans"][plan_key]["variations"][variation_key] || %{}
+    )
   end
 
   @doc """
@@ -281,10 +286,12 @@ defmodule SquareClient.Plans do
                 _ -> false
               end)
               |> Enum.map(fn {vkey, variation} ->
-                {plan_key, vkey, variation, nil}  # base_plan_id is nil
+                # base_plan_id is nil
+                {plan_key, vkey, variation, nil}
               end)
 
             %{acc | variations: variations_needing_creation ++ acc.variations}
+
           _ ->
             acc
         end
@@ -427,7 +434,10 @@ defmodule SquareClient.Plans do
   defp maybe_set_base_plan_id(%{"type" => "free"} = plan, _env), do: plan
 
   # Pattern match when we have sandbox/production fields (transform to base_plan_id)
-  defp maybe_set_base_plan_id(%{"sandbox_base_plan_id" => sandbox, "production_base_plan_id" => production} = plan, env) do
+  defp maybe_set_base_plan_id(
+         %{"sandbox_base_plan_id" => sandbox, "production_base_plan_id" => production} = plan,
+         env
+       ) do
     base_plan_id = if env == "production", do: production, else: sandbox
 
     plan
@@ -440,10 +450,13 @@ defmodule SquareClient.Plans do
   defp maybe_set_base_plan_id(plan, _env), do: plan
 
   # Pattern match when variations exist
-  defp maybe_transform_variations(%{"variations" => variations} = plan, env) when is_map(variations) do
-    transformed_variations = Map.new(variations, fn {key, variation} ->
-      {key, transform_variation_for_environment(variation, env)}
-    end)
+  defp maybe_transform_variations(%{"variations" => variations} = plan, env)
+       when is_map(variations) do
+    transformed_variations =
+      Map.new(variations, fn {key, variation} ->
+        {key, transform_variation_for_environment(variation, env)}
+      end)
+
     Map.put(plan, "variations", transformed_variations)
   end
 
