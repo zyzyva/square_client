@@ -28,6 +28,43 @@ A flexible Elixir client library for Square API integration, focused on subscrip
 
 ## Installation
 
+### Option 1: Automatic Installation with Igniter (Recommended)
+
+The easiest way to add Square integration to your Phoenix app:
+
+```bash
+# Add the dependency and run the installer
+mix igniter.install square_client
+
+# Or with custom owner module
+mix igniter.install square_client --owner-module MyApp.Accounts.User
+```
+
+This automatically generates:
+- ✅ Square configuration in config files
+- ✅ Subscription schema with your owner module
+- ✅ Database migration
+- ✅ Webhook handler implementation
+- ✅ Webhook controller
+- ✅ Router configuration
+- ✅ Runtime validation in application.ex
+
+Then just run the migration and set your environment variables:
+
+```bash
+# Run the migration
+mix ecto.migrate
+
+# Set environment variables
+export SQUARE_ACCESS_TOKEN="your_token"
+export SQUARE_LOCATION_ID="your_location_id"
+
+# Start your app
+mix phx.server
+```
+
+### Option 2: Manual Installation
+
 Add `square_client` to your dependencies in `mix.exs`:
 
 ```elixir
@@ -37,6 +74,8 @@ def deps do
   ]
 end
 ```
+
+Then follow the Quick Start guide below to configure manually.
 
 ## Quick Start
 

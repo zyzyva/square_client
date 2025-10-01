@@ -13,6 +13,9 @@ defmodule SquareClient.MixProject do
       docs: [
         main: "SquareClient",
         extras: ["README.md"]
+      ],
+      igniter: [
+        Mix.Tasks.SquareClient.Install
       ]
     ]
   end
@@ -31,6 +34,7 @@ defmodule SquareClient.MixProject do
       {:plug, "~> 1.16", optional: true},
       {:plug_crypto, "~> 2.0"},
       {:ecto, "~> 3.13", optional: true},
+      {:igniter, "~> 0.6", optional: true},
       {:ex_doc, "~> 0.35", only: :dev, runtime: false},
       {:mox, "~> 1.1", only: :test},
       {:bypass, "~> 2.1", only: :test}
