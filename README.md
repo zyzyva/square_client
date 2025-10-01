@@ -16,9 +16,12 @@ A flexible Elixir client library for Square API integration, focused on subscrip
 - **Direct Square API integration** - No proxy service or message queue required
 - **Webhook handling infrastructure** - Standardized webhook processing with signature verification
 - **Subscription plan and variation management** - Following Square's recommended patterns
+- **Reusable subscription schema** - Drop-in Ecto schema with Square sync capabilities
+- **Prorated refund calculations** - Automatic refund processing for subscription cancellations
 - **One-time purchase support** - Sell passes and time-limited access
 - **Synchronous REST API** - Immediate feedback for payment processing
 - **Environment-aware configuration** - Automatic sandbox/production switching
+- **Runtime configuration validation** - Catch missing config at app startup with helpful errors
 - **Comprehensive test coverage** - Fast (0.1s), clean tests with mocked API calls
 - **Multiple configuration methods** - Application config, environment variables, or defaults
 - **Behaviour-based extensibility** - Implement webhooks consistently across all apps
@@ -34,6 +37,67 @@ def deps do
   ]
 end
 ```
+
+## Quick Start
+
+### 1. Add to your application
+
+```elixir
+# In your application.ex
+def start(_type, _args) do
+  # Validate Square config at startup
+  SquareClient.Config.validate_runtime!()
+
+  children = [
+    # ... your other children
+  ]
+  # ...
+end
+```
+
+### 2. Configure Square credentials
+
+```elixir
+# config/config.exs
+config :square_client,
+  api_url: "https://connect.squareupsandbox.com/v2",
+  access_token: System.get_env("SQUARE_ACCESS_TOKEN"),
+  location_id: System.get_env("SQUARE_LOCATION_ID"),
+  webhook_handler: MyApp.Payments.SquareWebhookHandler
+
+# config/prod.exs
+config :square_client,
+  api_url: "https://connect.squareup.com/v2"  # Production URL
+```
+
+### 3. Create your subscription schema
+
+```elixir
+defmodule MyApp.Payments.Subscription do
+  use SquareClient.Subscriptions.Schema,
+    repo: MyApp.Repo,
+    belongs_to: [
+      {:user, MyApp.Accounts.User}
+    ]
+end
+```
+
+### 4. Implement webhook handler
+
+```elixir
+defmodule MyApp.Payments.SquareWebhookHandler do
+  @behaviour SquareClient.WebhookHandler
+
+  def handle_event(%{event_type: "subscription.created", data: data}) do
+    # Sync subscription to your database
+    :ok
+  end
+
+  def handle_event(_event), do: :ok
+end
+```
+
+That's it! You now have a complete Square integration with subscriptions, webhooks, and refunds.
 
 ## Configuration
 
@@ -226,6 +290,178 @@ plans = [
 ]
 ```
 
+### Subscription Management
+
+The library provides complete subscription management infrastructure that you can drop into your app.
+
+#### 1. Subscription Schema
+
+Use the reusable schema macro to create your subscription table:
+
+```elixir
+defmodule MyApp.Payments.Subscription do
+  use SquareClient.Subscriptions.Schema,
+    repo: MyApp.Repo,
+    belongs_to: [
+      {:user, MyApp.Accounts.User}
+    ]
+
+  # Optional: Add app-specific helper functions
+  defdelegate get_active_for_user(user_or_id), to: __MODULE__, as: :get_active_for_owner
+end
+```
+
+This automatically gives you:
+- Complete Ecto schema with all Square subscription fields
+- `square_subscription_id`, `status`, `tier`, billing dates, etc.
+- Query helpers: `active/0`, `for_owner/2`, `get_active_for_owner/1`
+- Automatic Square sync capabilities
+
+**Generate the migration:**
+
+```bash
+mix ecto.gen.migration create_subscriptions
+```
+
+```elixir
+defmodule MyApp.Repo.Migrations.CreateSubscriptions do
+  use Ecto.Migration
+
+  def change do
+    create table(:subscriptions) do
+      add :square_subscription_id, :string, null: false
+      add :square_customer_id, :string
+      add :status, :string, null: false
+      add :tier, :string, null: false
+      add :charged_through_date, :date
+      add :canceled_date, :date
+      add :start_date, :date
+      add :next_billing_date, :date
+      add :user_id, references(:users, on_delete: :delete_all), null: false
+
+      timestamps(type: :utc_datetime)
+    end
+
+    create unique_index(:subscriptions, [:square_subscription_id])
+    create index(:subscriptions, [:user_id])
+    create index(:subscriptions, [:status])
+  end
+end
+```
+
+#### 2. Creating Subscriptions
+
+```elixir
+# Create subscription with Square
+{:ok, subscription} = SquareClient.Subscriptions.create_with_plan_lookup(
+  customer_id,
+  "premium_monthly",  # Plan key from your config
+  card_token
+)
+
+# Sync to your database
+SquareClient.Subscriptions.Context.sync_from_square(
+  MyApp.Payments.Subscription,
+  MyApp.Repo,
+  subscription
+)
+```
+
+#### 3. Syncing from Webhooks
+
+```elixir
+defmodule MyApp.Payments.SquareWebhookHandler do
+  @behaviour SquareClient.WebhookHandler
+
+  alias MyApp.Payments.Subscription
+  alias MyApp.Repo
+
+  def handle_event(%{event_type: "subscription.updated", data: %{"object" => %{"subscription" => square_sub}}}) do
+    # Automatically sync changes from Square
+    SquareClient.Subscriptions.Context.sync_from_square(
+      Subscription,
+      Repo,
+      square_sub
+    )
+    :ok
+  end
+
+  def handle_event(_event), do: :ok
+end
+```
+
+#### 4. Canceling with Prorated Refunds
+
+```elixir
+alias SquareClient.Subscriptions.Refunds
+
+# Cancel subscription
+{:ok, _} = SquareClient.Subscriptions.cancel(subscription.square_subscription_id)
+
+# Calculate prorated refund
+subscription = Repo.get!(MyApp.Payments.Subscription, subscription_id)
+days_remaining = Refunds.calculate_remaining_days(subscription)
+
+refund_amount = Refunds.calculate_prorated_refund(
+  subscription,
+  days_remaining,
+  %{monthly: 999, yearly: 9999}  # Your plan pricing
+)
+
+# Process automatic refund
+Refunds.process_automatic_refund(
+  subscription,
+  refund_amount,
+  payment_id: last_payment_id
+)
+```
+
+#### 5. Query Helpers
+
+The schema provides built-in query helpers:
+
+```elixir
+# Get active subscription for a user
+subscription = MyApp.Payments.Subscription.get_active_for_owner(user.id)
+
+# Query active subscriptions
+active_subs =
+  MyApp.Payments.Subscription
+  |> MyApp.Payments.Subscription.active()
+  |> Repo.all()
+
+# Query subscriptions for a specific user
+user_subs =
+  MyApp.Payments.Subscription
+  |> MyApp.Payments.Subscription.for_owner(user.id)
+  |> Repo.all()
+```
+
+### Subscription Constants
+
+Access Square status and tier constants:
+
+```elixir
+alias SquareClient.Subscriptions.Constants
+
+# Tier constants
+Constants.tier_free()      # "free"
+Constants.tier_premium()   # "premium"
+
+# Status constants
+Constants.status_active()     # "active"
+Constants.status_canceled()   # "canceled"
+Constants.status_past_due()   # "past_due"
+
+# Square status constants
+Constants.square_status_active()      # "ACTIVE"
+Constants.square_status_canceled()    # "CANCELED"
+Constants.square_status_delinquent()  # "DELINQUENT"
+
+# Convert Square status to internal status
+internal_status = Constants.square_to_internal_status("ACTIVE")  # "active"
+```
+
 ## Mix Tasks for Apps
 
 Apps using this library can create Mix tasks for plan management:
@@ -395,7 +631,24 @@ scope "/webhooks", MyAppWeb do
 end
 ```
 
-4. **Create a minimal controller**:
+4. **Create a webhook controller using the library behavior**:
+
+```elixir
+defmodule MyAppWeb.WebhookController do
+  use MyAppWeb, :controller
+  use SquareClient.Controllers.WebhookController
+
+  # That's it! The behavior provides complete webhook handling
+  # You can optionally override any response handlers:
+
+  # def handle_success(conn, event) do
+  #   # Custom success response
+  #   conn |> put_status(:accepted) |> json(%{ok: true})
+  # end
+end
+```
+
+**Manual Implementation (if you prefer):**
 
 ```elixir
 defmodule MyAppWeb.WebhookController do
@@ -435,14 +688,64 @@ end
 
 ```elixir
 config :square_client,
+  # Required: Square API URL
+  api_url: "https://connect.squareupsandbox.com/v2",  # or production URL
+
+  # Required: Square access token
+  access_token: System.get_env("SQUARE_ACCESS_TOKEN"),
+
+  # Required: Square location ID
+  location_id: System.get_env("SQUARE_LOCATION_ID"),
+
   # Required: Your webhook handler module
   webhook_handler: MyApp.SquareWebhookHandler,
 
-  # Required: Square webhook signature key (from Square dashboard)
-  webhook_signature_key: "your_signature_key_here"
+  # Optional: Square webhook signature key (from Square dashboard)
+  webhook_signature_key: System.get_env("SQUARE_WEBHOOK_SIGNATURE_KEY")
+```
+
+**Configuration Validation:**
+
+The library validates all required configuration at app startup:
+
+```elixir
+# In your application.ex
+def start(_type, _args) do
+  # Validates api_url, access_token, location_id, and webhook_handler
+  # Raises clear error with examples if anything is missing
+  SquareClient.Config.validate_runtime!()
+
+  children = [...]
+  # ...
+end
+```
+
+If configuration is invalid, you'll get a helpful error message:
+
+```
+SquareClient configuration is invalid:
+
+  • API URL is not configured. Add :api_url to your config :square_client
+  • Webhook handler is not configured. Add :webhook_handler to your config :square_client if you use webhooks
+
+Required configuration:
+
+  config :square_client,
+    api_url: "https://connect.squareupsandbox.com/v2",  # or production URL
+    access_token: System.get_env("SQUARE_ACCESS_TOKEN"),
+    location_id: System.get_env("SQUARE_LOCATION_ID"),
+    webhook_handler: MyApp.Payments.SquareWebhookHandler  # if using webhooks
+
+Environment variables:
+  SQUARE_ACCESS_TOKEN - Your Square API access token (required)
+  SQUARE_LOCATION_ID - Your Square location ID (required)
+
+Get these from: https://developer.squareup.com/apps
 ```
 
 Or use environment variables:
+- `SQUARE_ACCESS_TOKEN` - Your Square API access token (required)
+- `SQUARE_LOCATION_ID` - Your Square location ID (required)
 - `SQUARE_WEBHOOK_SIGNATURE_KEY` - Your webhook signature key
 
 ### Testing Webhooks
