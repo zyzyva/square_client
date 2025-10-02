@@ -87,6 +87,9 @@ defmodule SquareClient.Config do
   Checks that all required configuration is present, including environment
   variables that may not be available at compile time.
 
+  Also validates that subscription plans have been synced to Square (logs warnings
+  but doesn't raise).
+
   Returns :ok or raises RuntimeError with helpful message.
   """
   def validate_runtime! do
@@ -99,6 +102,8 @@ defmodule SquareClient.Config do
 
     case errors do
       [] ->
+        # Validate plans (logs errors but doesn't raise)
+        validate_plans()
         :ok
 
       errors ->
@@ -121,6 +126,29 @@ defmodule SquareClient.Config do
 
         Get these from: https://developer.squareup.com/apps
         """
+    end
+  end
+
+  defp validate_plans do
+    # Get the webhook handler app to know which app's plans to validate
+    case Application.get_env(:square_client, :webhook_handler) do
+      nil ->
+        :ok
+
+      handler when is_atom(handler) ->
+        # Extract app name from webhook handler module
+        # e.g., MyApp.Payments.SquareWebhookHandler -> :my_app
+        app_name =
+          handler
+          |> Module.split()
+          |> List.first()
+          |> Macro.underscore()
+          |> String.to_atom()
+
+        SquareClient.ConfigValidator.validate_plans(app_name)
+
+      _ ->
+        :ok
     end
   end
 
@@ -229,9 +257,13 @@ defmodule SquareClient.Config do
   end
 
   defp validate_access_token(errors) do
-    case Application.get_env(:square_client, :access_token) || System.get_env("SQUARE_ACCESS_TOKEN") do
+    case Application.get_env(:square_client, :access_token) ||
+           System.get_env("SQUARE_ACCESS_TOKEN") do
       nil ->
-        ["Access token is not configured. Set SQUARE_ACCESS_TOKEN environment variable or configure :access_token" | errors]
+        [
+          "Access token is not configured. Set SQUARE_ACCESS_TOKEN environment variable or configure :access_token"
+          | errors
+        ]
 
       token when is_binary(token) and byte_size(token) > 0 ->
         errors
@@ -244,7 +276,10 @@ defmodule SquareClient.Config do
   defp validate_location_id(errors) do
     case Application.get_env(:square_client, :location_id) || System.get_env("SQUARE_LOCATION_ID") do
       nil ->
-        ["Location ID is not configured. Set SQUARE_LOCATION_ID environment variable or configure :location_id" | errors]
+        [
+          "Location ID is not configured. Set SQUARE_LOCATION_ID environment variable or configure :location_id"
+          | errors
+        ]
 
       location_id when is_binary(location_id) and byte_size(location_id) > 0 ->
         errors
@@ -257,7 +292,10 @@ defmodule SquareClient.Config do
   defp validate_webhook_handler(errors) do
     case Application.get_env(:square_client, :webhook_handler) do
       nil ->
-        ["Webhook handler is not configured. Add :webhook_handler to your config :square_client if you use webhooks" | errors]
+        [
+          "Webhook handler is not configured. Add :webhook_handler to your config :square_client if you use webhooks"
+          | errors
+        ]
 
       handler when is_atom(handler) ->
         validate_webhook_module(handler, errors)

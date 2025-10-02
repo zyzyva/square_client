@@ -135,8 +135,13 @@ defmodule SquareClient.Controllers.WebhookController do
 
       # Pattern match on the webhook result from WebhookPlug
       defp handle_webhook_result(conn, {:ok, event}), do: handle_success(conn, event)
-      defp handle_webhook_result(conn, {:error, :invalid_signature}), do: handle_invalid_signature(conn)
-      defp handle_webhook_result(conn, {:error, :missing_signature}), do: handle_missing_signature(conn)
+
+      defp handle_webhook_result(conn, {:error, :invalid_signature}),
+        do: handle_invalid_signature(conn)
+
+      defp handle_webhook_result(conn, {:error, :missing_signature}),
+        do: handle_missing_signature(conn)
+
       defp handle_webhook_result(conn, {:error, reason}), do: handle_error(conn, reason)
       defp handle_webhook_result(conn, nil), do: handle_missing_event(conn)
 

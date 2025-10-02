@@ -59,21 +59,21 @@ defmodule SquareClient.Subscriptions.Schema do
 
       @primary_key {:id, :id, autogenerate: true}
       schema unquote(table_name) do
-        field :square_subscription_id, :string
-        field :plan_id, :string
-        field :status, :string
-        field :card_id, :string
-        field :payment_id, :string
-        field :started_at, :utc_datetime
-        field :canceled_at, :utc_datetime
-        field :next_billing_at, :utc_datetime
-        field :trial_ends_at, :utc_datetime
+        field(:square_subscription_id, :string)
+        field(:plan_id, :string)
+        field(:status, :string)
+        field(:card_id, :string)
+        field(:payment_id, :string)
+        field(:started_at, :utc_datetime)
+        field(:canceled_at, :utc_datetime)
+        field(:next_billing_at, :utc_datetime)
+        field(:trial_ends_at, :utc_datetime)
 
         # Inject belongs_to associations
         unquote_splicing(
           for {field_name, module} <- belongs_to_associations do
             quote do
-              belongs_to unquote(field_name), unquote(module)
+              belongs_to(unquote(field_name), unquote(module))
             end
           end
         )
@@ -86,14 +86,15 @@ defmodule SquareClient.Subscriptions.Schema do
       """
       def changeset(subscription, attrs) do
         # Get owner field name (e.g., :user_id) from belongs_to associations
-        owner_field = unquote(belongs_to_associations)
-        |> List.first()
-        |> case do
-          {field_name, _module} -> :"#{field_name}_id"
-          nil -> nil
-        end
+        owner_field =
+          unquote(belongs_to_associations)
+          |> List.first()
+          |> case do
+            {field_name, _module} -> :"#{field_name}_id"
+            nil -> nil
+          end
 
-        required_fields = [:plan_id, :status] ++ (if owner_field, do: [owner_field], else: [])
+        required_fields = [:plan_id, :status] ++ if owner_field, do: [owner_field], else: []
 
         subscription
         |> cast(attrs, [
@@ -124,8 +125,9 @@ defmodule SquareClient.Subscriptions.Schema do
       Query for active subscriptions (ACTIVE or PENDING status).
       """
       def active do
-        from s in __MODULE__,
+        from(s in __MODULE__,
           where: s.status in ["ACTIVE", "PENDING"]
+        )
       end
 
       @doc """
@@ -136,15 +138,17 @@ defmodule SquareClient.Subscriptions.Schema do
       def for_owner(query \\ __MODULE__, owner)
 
       def for_owner(query, owner_id) when is_integer(owner_id) do
-        owner_field = unquote(belongs_to_associations)
-        |> List.first()
-        |> case do
-          {field_name, _module} -> :"#{field_name}_id"
-          nil -> raise "No belongs_to association defined"
-        end
+        owner_field =
+          unquote(belongs_to_associations)
+          |> List.first()
+          |> case do
+            {field_name, _module} -> :"#{field_name}_id"
+            nil -> raise "No belongs_to association defined"
+          end
 
-        from s in query,
+        from(s in query,
           where: field(s, ^owner_field) == ^owner_id
+        )
       end
 
       def for_owner(query, %{id: owner_id}) do
@@ -155,12 +159,13 @@ defmodule SquareClient.Subscriptions.Schema do
       Get the most recent active subscription for an owner.
       """
       def get_active_for_owner(owner_id) when is_integer(owner_id) do
-        owner_field = unquote(belongs_to_associations)
-        |> List.first()
-        |> case do
-          {field_name, _module} -> :"#{field_name}_id"
-          nil -> raise "No belongs_to association defined"
-        end
+        owner_field =
+          unquote(belongs_to_associations)
+          |> List.first()
+          |> case do
+            {field_name, _module} -> :"#{field_name}_id"
+            nil -> raise "No belongs_to association defined"
+          end
 
         active_statuses = ["ACTIVE", "PENDING"]
 
@@ -184,8 +189,9 @@ defmodule SquareClient.Subscriptions.Schema do
       Order subscriptions by most recent first.
       """
       def most_recent(query \\ __MODULE__) do
-        from s in query,
+        from(s in query,
           order_by: [desc: s.inserted_at]
+        )
       end
 
       @doc """
@@ -194,18 +200,23 @@ defmodule SquareClient.Subscriptions.Schema do
       Returns a string that can be used in a migration file.
       """
       def migration_code do
-        owner_field = unquote(belongs_to_associations)
-        |> List.first()
-        |> case do
-          {field_name, module} ->
-            table_name = module
-            |> Module.split()
-            |> List.last()
-            |> Macro.underscore()
-            |> Kernel.<>("s")
-            {field_name, table_name}
-          nil -> nil
-        end
+        owner_field =
+          unquote(belongs_to_associations)
+          |> List.first()
+          |> case do
+            {field_name, module} ->
+              table_name =
+                module
+                |> Module.split()
+                |> List.last()
+                |> Macro.underscore()
+                |> Kernel.<>("s")
+
+              {field_name, table_name}
+
+            nil ->
+              nil
+          end
 
         """
         defmodule MyApp.Repo.Migrations.CreateSubscriptions do
@@ -214,9 +225,9 @@ defmodule SquareClient.Subscriptions.Schema do
           def change do
             create table(:#{unquote(table_name)}) do
               #{if owner_field do
-                {field, table} = owner_field
-                "add :#{field}_id, references(:#{table}, on_delete: :delete_all), null: false"
-              end}
+          {field, table} = owner_field
+          "add :#{field}_id, references(:#{table}, on_delete: :delete_all), null: false"
+        end}
               add :square_subscription_id, :string
               add :plan_id, :string, null: false
               add :status, :string, null: false
@@ -231,14 +242,14 @@ defmodule SquareClient.Subscriptions.Schema do
             end
 
             #{if owner_field do
-              {field, _table} = owner_field
-              """
-              create index(:#{unquote(table_name)}, [:#{field}_id])
-              create unique_index(:#{unquote(table_name)}, [:square_subscription_id])
-              """
-            else
-              "create unique_index(:#{unquote(table_name)}, [:square_subscription_id])"
-            end}
+          {field, _table} = owner_field
+          """
+          create index(:#{unquote(table_name)}, [:#{field}_id])
+          create unique_index(:#{unquote(table_name)}, [:square_subscription_id])
+          """
+        else
+          "create unique_index(:#{unquote(table_name)}, [:square_subscription_id])"
+        end}
           end
         end
         """
