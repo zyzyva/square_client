@@ -90,85 +90,12 @@ defmodule SquareClient.Config do
   Returns :ok or raises RuntimeError with helpful message.
   """
   def validate_runtime! do
-    errors = []
-
-    # Check API URL
     errors =
-      case Application.get_env(:square_client, :api_url) do
-        nil ->
-          ["API URL is not configured. Add :api_url to your config :square_client" | errors]
-
-        url when is_binary(url) ->
-          errors
-
-        _ ->
-          ["API URL must be a string" | errors]
-      end
-
-    # Check access token
-    errors =
-      case Application.get_env(:square_client, :access_token) ||
-             System.get_env("SQUARE_ACCESS_TOKEN") do
-        nil ->
-          [
-            "Access token is not configured. Set SQUARE_ACCESS_TOKEN environment variable or configure :access_token"
-            | errors
-          ]
-
-        token when is_binary(token) and byte_size(token) > 0 ->
-          errors
-
-        _ ->
-          ["Access token must be a non-empty string" | errors]
-      end
-
-    # Check location ID
-    errors =
-      case Application.get_env(:square_client, :location_id) ||
-             System.get_env("SQUARE_LOCATION_ID") do
-        nil ->
-          [
-            "Location ID is not configured. Set SQUARE_LOCATION_ID environment variable or configure :location_id"
-            | errors
-          ]
-
-        location_id when is_binary(location_id) and byte_size(location_id) > 0 ->
-          errors
-
-        _ ->
-          ["Location ID must be a non-empty string" | errors]
-      end
-
-    # Check webhook handler (optional but recommended)
-    errors =
-      case Application.get_env(:square_client, :webhook_handler) do
-        nil ->
-          [
-            "Webhook handler is not configured. Add :webhook_handler to your config :square_client if you use webhooks"
-            | errors
-          ]
-
-        handler when is_atom(handler) ->
-          # Verify the module exists and implements handle_event/1
-          if Code.ensure_loaded?(handler) do
-            if function_exported?(handler, :handle_event, 1) do
-              errors
-            else
-              [
-                "Webhook handler #{inspect(handler)} must implement handle_event/1"
-                | errors
-              ]
-            end
-          else
-            [
-              "Webhook handler module #{inspect(handler)} does not exist or is not loaded"
-              | errors
-            ]
-          end
-
-        _ ->
-          ["Webhook handler must be a module name (atom)" | errors]
-      end
+      []
+      |> validate_api_url()
+      |> validate_access_token()
+      |> validate_location_id()
+      |> validate_webhook_handler()
 
     case errors do
       [] ->
@@ -290,6 +217,66 @@ defmodule SquareClient.Config do
       nil -> {:error, "Location ID not configured"}
       id when is_binary(id) and byte_size(id) > 0 -> {:ok, id}
       _ -> {:error, "Location ID must be a non-empty string"}
+    end
+  end
+
+  defp validate_api_url(errors) do
+    case Application.get_env(:square_client, :api_url) do
+      nil -> ["API URL is not configured. Add :api_url to your config :square_client" | errors]
+      url when is_binary(url) -> errors
+      _ -> ["API URL must be a string" | errors]
+    end
+  end
+
+  defp validate_access_token(errors) do
+    case Application.get_env(:square_client, :access_token) || System.get_env("SQUARE_ACCESS_TOKEN") do
+      nil ->
+        ["Access token is not configured. Set SQUARE_ACCESS_TOKEN environment variable or configure :access_token" | errors]
+
+      token when is_binary(token) and byte_size(token) > 0 ->
+        errors
+
+      _ ->
+        ["Access token must be a non-empty string" | errors]
+    end
+  end
+
+  defp validate_location_id(errors) do
+    case Application.get_env(:square_client, :location_id) || System.get_env("SQUARE_LOCATION_ID") do
+      nil ->
+        ["Location ID is not configured. Set SQUARE_LOCATION_ID environment variable or configure :location_id" | errors]
+
+      location_id when is_binary(location_id) and byte_size(location_id) > 0 ->
+        errors
+
+      _ ->
+        ["Location ID must be a non-empty string" | errors]
+    end
+  end
+
+  defp validate_webhook_handler(errors) do
+    case Application.get_env(:square_client, :webhook_handler) do
+      nil ->
+        ["Webhook handler is not configured. Add :webhook_handler to your config :square_client if you use webhooks" | errors]
+
+      handler when is_atom(handler) ->
+        validate_webhook_module(handler, errors)
+
+      _ ->
+        ["Webhook handler must be a module name (atom)" | errors]
+    end
+  end
+
+  defp validate_webhook_module(handler, errors) do
+    cond do
+      not Code.ensure_loaded?(handler) ->
+        ["Webhook handler module #{inspect(handler)} does not exist or is not loaded" | errors]
+
+      not function_exported?(handler, :handle_event, 1) ->
+        ["Webhook handler #{inspect(handler)} must implement handle_event/1" | errors]
+
+      true ->
+        errors
     end
   end
 end
