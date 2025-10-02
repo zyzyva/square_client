@@ -61,7 +61,8 @@ defmodule Mix.Tasks.SquareClient.Install do
 
   ## Options
 
-  This task has no options - it auto-detects everything from your Phoenix app.
+    * `--tests` - Generate comprehensive test files (default: true)
+    * `--no-tests` - Skip test generation
 
   Assumptions:
   - App follows Phoenix gen.auth conventions
@@ -74,7 +75,11 @@ defmodule Mix.Tasks.SquareClient.Install do
 
   @shortdoc "Generates Square subscription management files"
 
-  def run(_args) do
+  def run(args) do
+    # Parse options
+    {opts, _, _} = OptionParser.parse(args, strict: [tests: :boolean])
+    generate_tests = Keyword.get(opts, :tests, true)
+
     # Get app information
     app_name = Mix.Project.config()[:app]
     module_prefix = app_name |> Atom.to_string() |> Macro.camelize()
@@ -115,7 +120,16 @@ defmodule Mix.Tasks.SquareClient.Install do
     update_application(module_prefix)
     update_router(module_prefix)
     update_app_js()
+    update_user_schema(module_prefix, owner_module)
     run_migration()
+
+    # Generate tests if requested
+    if generate_tests do
+      Mix.shell().info("\n📝 Generating comprehensive test files...")
+      Mix.Task.run("square_client.gen.tests", [])
+    else
+      Mix.shell().info("\n⏭️  Skipping test generation (use --tests to generate)")
+    end
 
     # Print remaining manual steps
     print_manual_steps(module_prefix)
@@ -668,6 +682,91 @@ defmodule Mix.Tasks.SquareClient.Install do
     end
   end
 
+  defp update_user_schema(module_prefix, _owner_module) do
+    user_path = "lib/#{Macro.underscore(module_prefix)}/accounts/user.ex"
+
+    unless File.exists?(user_path) do
+      Mix.shell().error("  ⚠️  Could not find User schema at #{user_path}")
+      Mix.shell().error("     You'll need to manually add square_customer_id field and subscriptions association")
+      :ok
+    else
+      do_update_user_schema(user_path, module_prefix)
+    end
+  end
+
+  defp do_update_user_schema(user_path, module_prefix) do
+
+    content = File.read!(user_path)
+
+    # Check if already has square_customer_id
+    if content =~ ~r/field\s+:square_customer_id/ do
+      Mix.shell().info("  * User schema already has square_customer_id field")
+    else
+      # Find the schema block and add the field before belongs_to or timestamps
+      content =
+        cond do
+          # Try to add before belongs_to
+          content =~ ~r/\n(\s+)belongs_to / ->
+            String.replace(content, ~r/\n(\s+)belongs_to /, "\n    field :square_customer_id, :string\n\n\\1belongs_to ", global: false)
+
+          # Try to add before has_many
+          content =~ ~r/\n(\s+)has_many / ->
+            String.replace(content, ~r/\n(\s+)has_many /, "\n    field :square_customer_id, :string\n\n\\1has_many ", global: false)
+
+          # Try to add before timestamps
+          content =~ ~r/\n(\s+)timestamps\(/ ->
+            String.replace(content, ~r/\n(\s+)timestamps\(/, "\n    field :square_customer_id, :string\n\n\\1timestamps(", global: false)
+
+          # Default: couldn't find insertion point
+          true ->
+            Mix.shell().error("  ⚠️  Could not automatically add square_customer_id to User schema")
+            Mix.shell().error("     Please add manually: field :square_customer_id, :string")
+            content
+        end
+
+      if content != File.read!(user_path) do
+        File.write!(user_path, content)
+        Mix.shell().info("  * Updated #{user_path} with square_customer_id field")
+      end
+    end
+
+    # Check if already has subscriptions association
+    if content =~ ~r/has_many\s+:subscriptions/ do
+      Mix.shell().info("  * User schema already has subscriptions association")
+    else
+      # Add has_many :subscriptions after the square_customer_id or other associations
+      content = File.read!(user_path)
+
+      content =
+        cond do
+          # Try to add after other has_many
+          content =~ ~r/\n(\s+)has_many .+\n/ ->
+            String.replace(content, ~r/(\n\s+has_many .+\n)/, "\\1    has_many :subscriptions, #{module_prefix}.Payments.Subscription\n", global: false)
+
+          # Try to add after belongs_to
+          content =~ ~r/\n(\s+)belongs_to .+\n/ ->
+            String.replace(content, ~r/(\n\s+belongs_to .+\n)/, "\\1    has_many :subscriptions, #{module_prefix}.Payments.Subscription\n", global: false)
+
+          # Try to add before timestamps
+          content =~ ~r/\n(\s+)timestamps\(/ ->
+            String.replace(content, ~r/\n(\s+)timestamps\(/, "\n    has_many :subscriptions, #{module_prefix}.Payments.Subscription\n\n\\1timestamps(", global: false)
+
+          # Default: couldn't find insertion point
+          true ->
+            Mix.shell().error("  ⚠️  Could not automatically add subscriptions association to User schema")
+            Mix.shell().error("     Please add manually: has_many :subscriptions, #{module_prefix}.Payments.Subscription")
+            content
+        end
+
+      if content != File.read!(user_path) do
+        File.write!(user_path, content)
+        Mix.shell().info("  * Updated #{user_path} with subscriptions association")
+      end
+    end
+
+    :ok
+  end
+
   defp run_migration do
     Mix.shell().info("\n  Running migration...")
     Mix.Task.run("ecto.migrate")
@@ -678,17 +777,7 @@ defmodule Mix.Tasks.SquareClient.Install do
 
     📋 Remaining Manual Steps:
 
-    1. Add square_customer_id field to your User schema:
-
-       In lib/#{Macro.underscore(module_prefix)}/accounts/user.ex, add:
-
-         field :square_customer_id, :string
-
-       Then run migrations:
-
-         mix ecto.migrate
-
-    2. Add Square SDK script to your root layout:
+    1. Add Square SDK script to your root layout:
 
        In lib/#{Macro.underscore(module_prefix)}_web/components/layouts/root.html.heex, add before </head>:
 
@@ -698,7 +787,7 @@ defmodule Mix.Tasks.SquareClient.Install do
 
          <script type="text/javascript" src="https://web.squarecdn.com/v1/square.js"></script>
 
-    3. Set environment variables:
+    2. Set environment variables:
 
        export SQUARE_ACCESS_TOKEN="your_sandbox_token"
        export SQUARE_LOCATION_ID="your_location_id"
@@ -706,7 +795,7 @@ defmodule Mix.Tasks.SquareClient.Install do
 
        Get your credentials from: https://developer.squareup.com/apps
 
-    4. Customize priv/square_plans.json:
+    3. Customize priv/square_plans.json:
        - Update pricing to match your plans
        - Add your Square plan/variation IDs from Square Dashboard
        - Customize features and descriptions for your app
