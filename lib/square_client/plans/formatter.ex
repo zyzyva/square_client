@@ -306,7 +306,12 @@ defmodule SquareClient.Plans.Formatter do
   defp default_billing_notice(_), do: "Auto-renews until cancelled"
 
   defp default_recommendation(:free, _current), do: false
-  defp default_recommendation(plan_id, :free) when plan_id != :free, do: true
+
+  defp default_recommendation(plan_id, :free) when plan_id != :free do
+    # For free users, only recommend monthly plans
+    plan_str = Atom.to_string(plan_id)
+    String.ends_with?(plan_str, "_monthly")
+  end
 
   defp default_recommendation(plan_id, current_id)
        when is_atom(plan_id) and is_atom(current_id) do
