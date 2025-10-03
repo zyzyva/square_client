@@ -45,44 +45,61 @@ defmodule Mix.Tasks.SquareClient.Gen.Tests do
   @test_files [
     # Context tests
     {"test/context/payments_test.exs", "test/APP_PATH/payments_test.exs"},
-    {"test/context/payments/one_time_purchase_test.exs", "test/APP_PATH/payments/one_time_purchase_test.exs"},
+    {"test/context/payments/one_time_purchase_test.exs",
+     "test/APP_PATH/payments/one_time_purchase_test.exs"},
     {"test/context/payments/api_failure_test.exs", "test/APP_PATH/payments/api_failure_test.exs"},
     {"test/context/payments/plan_config_test.exs", "test/APP_PATH/payments/plan_config_test.exs"},
-    {"test/context/payments/square_webhook_handler_test.exs", "test/APP_PATH/payments/square_webhook_handler_test.exs"},
+    {"test/context/payments/square_webhook_handler_test.exs",
+     "test/APP_PATH/payments/square_webhook_handler_test.exs"},
     # Web tests
-    {"test/web/controllers/square_webhook_controller_test.exs", "test/APP_PATH_web/controllers/square_webhook_controller_test.exs"},
-    {"test/web/live/subscription_live_test.exs", "test/APP_PATH_web/live/subscription_live_test.exs"},
-    {"test/web/live/subscription_live_api_failure_test.exs", "test/APP_PATH_web/live/subscription_live_api_failure_test.exs"},
-    {"test/web/live/subscription_refund_test.exs", "test/APP_PATH_web/live/subscription_refund_test.exs"}
+    {"test/web/controllers/square_webhook_controller_test.exs",
+     "test/APP_PATH_web/controllers/square_webhook_controller_test.exs"},
+    {"test/web/live/subscription_live_test.exs",
+     "test/APP_PATH_web/live/subscription_live_test.exs"},
+    {"test/web/live/subscription_live_api_failure_test.exs",
+     "test/APP_PATH_web/live/subscription_live_api_failure_test.exs"},
+    {"test/web/live/subscription_refund_test.exs",
+     "test/APP_PATH_web/live/subscription_refund_test.exs"}
   ]
 
   @impl Mix.Task
   def run(args) do
-    {opts, positional_args, _} = OptionParser.parse(args,
-      strict: [accounts_context: :string, repo: :string],
-      aliases: [a: :accounts_context, r: :repo]
-    )
+    {opts, positional_args, _} =
+      OptionParser.parse(args,
+        strict: [accounts_context: :string, repo: :string],
+        aliases: [a: :accounts_context, r: :repo]
+      )
 
     accounts_context = Keyword.get(opts, :accounts_context, "Accounts")
     repo = Keyword.get(opts, :repo, "Repo")
 
     # Auto-detect app name from Mix.Project, or use provided argument
-    app_name = case positional_args do
-      [name | _] -> name
-      [] ->
-        Mix.Project.config()[:app]
-        |> Atom.to_string()
-        |> Macro.camelize()
-    end
+    app_name =
+      case positional_args do
+        [name | _] ->
+          name
+
+        [] ->
+          Mix.Project.config()[:app]
+          |> Atom.to_string()
+          |> Macro.camelize()
+      end
 
     # Calculate paths and module names
-    app_module = case app_name do
-      name when is_binary(name) -> Macro.camelize(name)
-      name when is_atom(name) -> name |> Atom.to_string() |> Macro.camelize()
-    end
+    app_module =
+      case app_name do
+        name when is_binary(name) -> Macro.camelize(name)
+        name when is_atom(name) -> name |> Atom.to_string() |> Macro.camelize()
+      end
+
     app_path = Macro.underscore(app_module)
 
-    Mix.shell().info([:green, "* Generating ", :reset, "Square payment integration tests for #{app_module}"])
+    Mix.shell().info([
+      :green,
+      "* Generating ",
+      :reset,
+      "Square payment integration tests for #{app_module}"
+    ])
 
     # Create the test directories
     create_test_directories(app_path)
@@ -108,7 +125,10 @@ defmodule Mix.Tasks.SquareClient.Gen.Tests do
     Mix.shell().info("  - Refund calculation tests")
     Mix.shell().info("\nRun tests with: mix test")
     Mix.shell().info("\nFor test documentation, see:")
-    Mix.shell().info("  #{:square_client |> Application.app_dir() |> Path.join("TEST_TEMPLATES.md")}")
+
+    Mix.shell().info(
+      "  #{:square_client |> Application.app_dir() |> Path.join("TEST_TEMPLATES.md")}"
+    )
   end
 
   defp create_test_directories(app_path) do
@@ -131,10 +151,11 @@ defmodule Mix.Tasks.SquareClient.Gen.Tests do
       |> Path.join(template_path)
 
     # Read template (or use from payments-refactor-use-json branch if not yet created)
-    content = case File.read(template_full_path) do
-      {:ok, content} -> content
-      {:error, _} -> fetch_from_contacts4us(template_path)
-    end
+    content =
+      case File.read(template_full_path) do
+        {:ok, content} -> content
+        {:error, _} -> fetch_from_contacts4us(template_path)
+      end
 
     # Replace placeholders
     transformed_content = transform_template(content, replacements)

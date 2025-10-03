@@ -687,7 +687,11 @@ defmodule Mix.Tasks.SquareClient.Install do
 
     unless File.exists?(user_path) do
       Mix.shell().error("  ⚠️  Could not find User schema at #{user_path}")
-      Mix.shell().error("     You'll need to manually add square_customer_id field and subscriptions association")
+
+      Mix.shell().error(
+        "     You'll need to manually add square_customer_id field and subscriptions association"
+      )
+
       :ok
     else
       do_update_user_schema(user_path, module_prefix)
@@ -695,7 +699,6 @@ defmodule Mix.Tasks.SquareClient.Install do
   end
 
   defp do_update_user_schema(user_path, module_prefix) do
-
     content = File.read!(user_path)
 
     # Check if already has square_customer_id
@@ -707,19 +710,37 @@ defmodule Mix.Tasks.SquareClient.Install do
         cond do
           # Try to add before belongs_to
           content =~ ~r/\n(\s+)belongs_to / ->
-            String.replace(content, ~r/\n(\s+)belongs_to /, "\n    field :square_customer_id, :string\n\n\\1belongs_to ", global: false)
+            String.replace(
+              content,
+              ~r/\n(\s+)belongs_to /,
+              "\n    field :square_customer_id, :string\n\n\\1belongs_to ",
+              global: false
+            )
 
           # Try to add before has_many
           content =~ ~r/\n(\s+)has_many / ->
-            String.replace(content, ~r/\n(\s+)has_many /, "\n    field :square_customer_id, :string\n\n\\1has_many ", global: false)
+            String.replace(
+              content,
+              ~r/\n(\s+)has_many /,
+              "\n    field :square_customer_id, :string\n\n\\1has_many ",
+              global: false
+            )
 
           # Try to add before timestamps
           content =~ ~r/\n(\s+)timestamps\(/ ->
-            String.replace(content, ~r/\n(\s+)timestamps\(/, "\n    field :square_customer_id, :string\n\n\\1timestamps(", global: false)
+            String.replace(
+              content,
+              ~r/\n(\s+)timestamps\(/,
+              "\n    field :square_customer_id, :string\n\n\\1timestamps(",
+              global: false
+            )
 
           # Default: couldn't find insertion point
           true ->
-            Mix.shell().error("  ⚠️  Could not automatically add square_customer_id to User schema")
+            Mix.shell().error(
+              "  ⚠️  Could not automatically add square_customer_id to User schema"
+            )
+
             Mix.shell().error("     Please add manually: field :square_customer_id, :string")
             content
         end
@@ -741,20 +762,41 @@ defmodule Mix.Tasks.SquareClient.Install do
         cond do
           # Try to add after other has_many
           content =~ ~r/\n(\s+)has_many .+\n/ ->
-            String.replace(content, ~r/(\n\s+has_many .+\n)/, "\\1    has_many :subscriptions, #{module_prefix}.Payments.Subscription\n", global: false)
+            String.replace(
+              content,
+              ~r/(\n\s+has_many .+\n)/,
+              "\\1    has_many :subscriptions, #{module_prefix}.Payments.Subscription\n",
+              global: false
+            )
 
           # Try to add after belongs_to
           content =~ ~r/\n(\s+)belongs_to .+\n/ ->
-            String.replace(content, ~r/(\n\s+belongs_to .+\n)/, "\\1    has_many :subscriptions, #{module_prefix}.Payments.Subscription\n", global: false)
+            String.replace(
+              content,
+              ~r/(\n\s+belongs_to .+\n)/,
+              "\\1    has_many :subscriptions, #{module_prefix}.Payments.Subscription\n",
+              global: false
+            )
 
           # Try to add before timestamps
           content =~ ~r/\n(\s+)timestamps\(/ ->
-            String.replace(content, ~r/\n(\s+)timestamps\(/, "\n    has_many :subscriptions, #{module_prefix}.Payments.Subscription\n\n\\1timestamps(", global: false)
+            String.replace(
+              content,
+              ~r/\n(\s+)timestamps\(/,
+              "\n    has_many :subscriptions, #{module_prefix}.Payments.Subscription\n\n\\1timestamps(",
+              global: false
+            )
 
           # Default: couldn't find insertion point
           true ->
-            Mix.shell().error("  ⚠️  Could not automatically add subscriptions association to User schema")
-            Mix.shell().error("     Please add manually: has_many :subscriptions, #{module_prefix}.Payments.Subscription")
+            Mix.shell().error(
+              "  ⚠️  Could not automatically add subscriptions association to User schema"
+            )
+
+            Mix.shell().error(
+              "     Please add manually: has_many :subscriptions, #{module_prefix}.Payments.Subscription"
+            )
+
             content
         end
 
