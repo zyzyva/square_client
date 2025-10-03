@@ -394,7 +394,190 @@ defmodule SquareClient.Plans do
     |> String.replace("}]", "}\n]")
   end
 
-  defp environment(app) do
+  @doc """
+  Validate that immutable fields haven't changed on existing plan variations.
+
+  Uses git to compare the current plans JSON with the last committed version, checking if
+  variations with Square IDs have had their critical fields (amount, cadence, currency) modified.
+
+  ## Parameters
+
+    * `app` - The application atom
+    * `config_path` - Path to the config file (default: "square_plans.json")
+
+  ## Returns
+
+    * `{:ok, []}` - No changes detected
+    * `{:warning, changes}` - List of detected changes with details
+    * `{:error, reason}` - Could not perform validation (e.g., not in git repo, file not committed)
+
+  ## Example
+
+      iex> SquareClient.Plans.validate_immutable_fields(:my_app)
+      {:warning, [
+        %{
+          plan: "premium",
+          variation: "monthly",
+          field: "amount",
+          old_value: 999,
+          new_value: 1299,
+          variation_id: "ABC123",
+          message: "Price changed from $9.99 to $12.99 on existing variation - consider creating new variation"
+        }
+      ]}
+
+  ## Notes
+
+  This requires:
+  - Git repository
+  - The plans JSON file to be committed
+  - Git binary available in PATH
+
+  If git is not available or the file is not in a repo, returns `{:error, reason}`.
+  """
+  def validate_immutable_fields(app, config_path \\ "square_plans.json") do
+    full_path = Application.app_dir(app, Path.join("priv", config_path))
+
+    with {:ok, old_content} <- get_git_version(full_path),
+         {:ok, old_plans} <- parse_json_content(old_content),
+         {:ok, current_plans} <- load_config_safe(app, config_path) do
+      changes = detect_immutable_changes(old_plans, current_plans)
+
+      case changes do
+        [] -> {:ok, []}
+        changes -> {:warning, changes}
+      end
+    else
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp get_git_version(file_path) do
+    case System.cmd("git", ["show", "HEAD:#{file_path}"], stderr_to_stdout: true) do
+      {content, 0} -> {:ok, content}
+      {error, _} -> {:error, "Git error: #{error}"}
+    end
+  rescue
+    _ -> {:error, "Git not available or not in a git repository"}
+  end
+
+  defp parse_json_content(content) do
+    case Jason.decode(content) do
+      {:ok, data} -> {:ok, data}
+      {:error, _} -> {:error, "Could not parse previous JSON version"}
+    end
+  end
+
+  defp load_config_safe(app, config_path) do
+    try do
+      {:ok, load_config(app, config_path)}
+    rescue
+      _ -> {:error, "Could not load current configuration"}
+    end
+  end
+
+  defp detect_immutable_changes(old_config, new_config) do
+    immutable_fields = ["amount", "cadence", "currency"]
+    old_plans = get_in(old_config, ["plans"]) || %{}
+    new_plans = get_in(new_config, ["plans"]) || %{}
+
+    old_plans
+    |> Enum.flat_map(fn {plan_key, old_plan} ->
+      new_plan = new_plans[plan_key]
+
+      case {old_plan, new_plan} do
+        {%{"variations" => old_variations}, %{"variations" => new_variations}}
+        when is_map(old_variations) and is_map(new_variations) ->
+          detect_variation_changes(plan_key, old_variations, new_variations, immutable_fields)
+
+        _ ->
+          []
+      end
+    end)
+  end
+
+  defp detect_variation_changes(plan_key, old_variations, new_variations, immutable_fields) do
+    old_variations
+    |> Enum.flat_map(fn {var_key, old_var} ->
+      new_var = new_variations[var_key]
+
+      # Only check if the variation has a Square ID (exists in Square)
+      case {old_var["variation_id"], new_var} do
+        {nil, _} ->
+          # No Square ID yet, changes are OK
+          []
+
+        {variation_id, nil} ->
+          # Variation was removed
+          [
+            %{
+              plan: plan_key,
+              variation: var_key,
+              variation_id: variation_id,
+              field: :removed,
+              message:
+                "Variation removed from JSON but exists in Square - set active: false instead"
+            }
+          ]
+
+        {variation_id, new_var} ->
+          # Check each immutable field
+          Enum.flat_map(immutable_fields, fn field ->
+            old_value = old_var[field]
+            new_value = new_var[field]
+
+            if old_value != new_value && old_value != nil do
+              [
+                %{
+                  plan: plan_key,
+                  variation: var_key,
+                  field: field,
+                  old_value: old_value,
+                  new_value: new_value,
+                  variation_id: variation_id,
+                  message: format_change_message(field, old_value, new_value)
+                }
+              ]
+            else
+              []
+            end
+          end)
+      end
+    end)
+  end
+
+  defp format_change_message("amount", old, new) do
+    old_price = format_price(old)
+    new_price = format_price(new)
+
+    "Price changed from #{old_price} to #{new_price} on existing variation - you must create a new variation with the new price instead"
+  end
+
+  defp format_change_message("cadence", old, new) do
+    "Billing cadence changed from #{old} to #{new} on existing variation - you must create a new variation"
+  end
+
+  defp format_change_message("currency", old, new) do
+    "Currency changed from #{old} to #{new} on existing variation - you must create a new variation"
+  end
+
+  defp format_change_message(field, old, new) do
+    "Field '#{field}' changed from #{old} to #{new} on existing variation - this may require creating a new variation"
+  end
+
+  defp format_price(cents) when is_integer(cents) do
+    dollars = cents / 100
+    "$#{:erlang.float_to_binary(dollars, decimals: 2)}"
+  end
+
+  defp format_price(other), do: inspect(other)
+
+  @doc """
+  Get the current environment for an app (sandbox or production).
+
+  Returns "sandbox" or "production" based on the app's config.
+  """
+  def environment(app) do
     # Check app-specific environment config first
     # This allows each Phoenix app to configure its environment in config/*.exs files
     # DO NOT use Mix.env() as it's not available in releases!

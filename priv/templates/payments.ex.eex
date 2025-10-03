@@ -1,0 +1,848 @@
+defmodule {{MODULE}}.Payments do
+  @moduledoc """
+  Payment context for managing subscriptions and payments.
+  """
+
+  alias {{MODULE}}.Repo
+  alias {{MODULE}}.Accounts
+  alias {{MODULE}}.Accounts.User
+  alias {{MODULE}}.Payments.Subscription
+  alias SquareClient.Subscriptions.Constants
+  alias SquareClient.Subscriptions.Refunds
+  require Logger
+
+  # Plan pricing configuration for refund calculations
+  @refund_plan_config %{
+    "premium_week_pass" => %{price_cents: 499, duration_days: 7},
+    "premium_monthly" => %{price_cents: 999, duration_days: 30},
+    "premium_yearly" => %{price_cents: 9999, duration_days: 365}
+  }
+
+  @doc """
+  Get or create a Square customer for a user.
+  Calls Square API directly, not through payment service.
+  """
+  def get_or_create_customer(%User{square_customer_id: customer_id} = _user)
+      when not is_nil(customer_id) do
+    {:ok, customer_id}
+  end
+
+  def get_or_create_customer(%User{} = user) do
+    create_square_customer(user)
+  end
+
+  defp create_square_customer(user) do
+    case SquareClient.Customers.create(%{
+           email_address: user.email,
+           reference_id: "c4us:u:#{user.id}",
+           given_name: user.first_name,
+           family_name: user.last_name
+         }) do
+      {:ok, %{"customer" => customer}} ->
+        update_user_with_customer_id(user, customer["id"])
+
+      {:error, :api_unavailable} = error ->
+        Logger.error("Square API unavailable when creating customer for user #{user.id}")
+        error
+
+      {:error, reason} ->
+        Logger.error("Failed to create customer: #{inspect(reason)}")
+        {:error, :customer_creation_failed}
+    end
+  end
+
+  defp update_user_with_customer_id(user, customer_id) do
+    user
+    |> Ecto.Changeset.change(%{square_customer_id: customer_id})
+    |> Repo.update()
+
+    Logger.info("Created Square customer: #{customer_id}")
+    {:ok, customer_id}
+  end
+
+  @doc """
+  Create a subscription for a user using Square Subscriptions API.
+  Requires subscription plans to be configured in Square Dashboard.
+
+  If the user has an active subscription (one-time pass or recurring),
+  the new subscription will be deferred to start when the current access expires.
+
+  If there's an existing subscription (PENDING or ACTIVE), it will be canceled before creating the new one.
+  """
+  def create_subscription(%User{} = user, plan_variation_key, card_token) do
+    current_subscription = get_active_subscription(user)
+
+    # Calculate remaining days and refund amount
+    remaining_days = Refunds.calculate_remaining_days(current_subscription)
+    refund_amount = Refunds.calculate_prorated_refund(current_subscription, remaining_days, @refund_plan_config)
+
+    with {:ok, customer_id} <- get_or_create_customer(user),
+         # Process automatic refund if applicable
+         :ok <- Refunds.process_automatic_refund(current_subscription, refund_amount),
+         # Cancel existing subscription/pass locally
+         :ok <- cancel_existing_local_subscription(current_subscription),
+         # Create new subscription with delayed billing if there are remaining days
+         {:ok, subscription} <- create_subscription_with_credit(
+           customer_id,
+           plan_variation_key,
+           card_token,
+           remaining_days
+         ) do
+      # Process the new active subscription with refund info
+      result = process_successful_subscription(user, subscription, plan_variation_key, card_token, nil)
+
+      # Return the subscription with refund info separately (not merged into subscription data)
+      case result do
+        {:ok, subscription} when refund_amount > 0 ->
+          # Return a tuple with the subscription and refund info
+          refund_info = Refunds.build_refund_info(refund_amount, remaining_days, processed: true)
+          {:ok, subscription, refund_info}
+        {:ok, subscription} ->
+          # No refund, return just the subscription
+          {:ok, subscription}
+        error ->
+          error
+      end
+    else
+      {:error, :api_unavailable} = error ->
+        Logger.error("Square API unavailable during subscription creation")
+        error
+
+      {:error, :customer_creation_failed} ->
+        Logger.error("Failed to create Square customer for user #{user.id}")
+        {:error, "Unable to set up payment account. Please try again later."}
+
+      {:error, {:card_declined, message}} ->
+        {:error, message}
+
+      {:error, {:card_save_failed, message}} when is_binary(message) ->
+        {:error, "Unable to save payment method: #{message}"}
+
+      {:error, {:card_save_failed, _reason}} ->
+        {:error, "Unable to save payment method. Please try a different card."}
+
+      {:error, {:configuration_error, message}} ->
+        {:error, message}
+
+      {:error, :subscription_failed} ->
+        {:error, "Unable to create subscription. Please try again later."}
+
+      {:error, reason} = error ->
+        Logger.error("Subscription creation failed: #{inspect(reason)}")
+        error
+    end
+  end
+
+
+  # Cancel existing local subscription (not in Square if it's a one-time pass)
+  defp cancel_existing_local_subscription(nil), do: :ok
+
+  defp cancel_existing_local_subscription(subscription) do
+    Logger.info("Canceling existing subscription ID #{subscription.id} with plan #{subscription.plan_id}")
+
+    # Mark as canceled locally
+    {:ok, canceled} = subscription
+    |> Ecto.Changeset.change(%{
+      status: "CANCELED",
+      canceled_at: DateTime.utc_now() |> DateTime.truncate(:second)
+    })
+    |> Repo.update()
+
+    Logger.info("Canceled subscription ID #{canceled.id}, status is now #{canceled.status}")
+
+    # If it has a Square subscription ID, cancel it there too
+    if subscription.square_subscription_id do
+      case SquareClient.Subscriptions.cancel(subscription.square_subscription_id) do
+        {:ok, _} -> :ok
+        {:error, _} -> :ok  # Continue anyway
+      end
+    end
+
+    :ok
+  end
+
+  # Create subscription with credit for remaining days
+  defp create_subscription_with_credit(customer_id, plan_variation_key, card_token, remaining_days)
+       when remaining_days > 0 do
+    Logger.info("Upgrading with #{remaining_days} days remaining from previous plan")
+
+    case SquareClient.Subscriptions.create_with_plan_lookup(
+           customer_id,
+           plan_variation_key,
+           card_token,
+           app_name: :{{APP}}
+         ) do
+      {:ok, subscription} ->
+        Logger.info("Created subscription with #{remaining_days} days credit to be applied")
+        {:ok, subscription}
+
+      error ->
+        error
+    end
+  end
+
+  defp create_subscription_with_credit(customer_id, plan_variation_key, card_token, _remaining_days) do
+    SquareClient.Subscriptions.create_with_plan_lookup(
+      customer_id,
+      plan_variation_key,
+      card_token,
+      app_name: :{{APP}}
+    )
+  end
+
+
+  # Process a successful Square subscription - immediate activation
+  defp process_successful_subscription(user, subscription, plan_variation_key, card_token, nil) do
+    started_at = parse_subscription_start_date(subscription)
+    {:ok, _updated_user} = activate_user_subscription(user)
+    Logger.info("Activated premium subscription for user #{user.id}")
+    save_local_subscription(user, subscription, plan_variation_key, card_token, started_at)
+  end
+
+  # Process a successful Square subscription - check if ACTIVE or PENDING
+  defp process_successful_subscription(user, %{"status" => "ACTIVE"} = subscription, plan_variation_key, card_token, _start_date) do
+    started_at = parse_subscription_start_date(subscription)
+    {:ok, _updated_user} = activate_user_subscription(user)
+    Logger.info("Activated premium subscription for user #{user.id}")
+    save_local_subscription(user, subscription, plan_variation_key, card_token, started_at)
+  end
+
+  # Process a successful Square subscription - deferred start
+  defp process_successful_subscription(user, subscription, plan_variation_key, card_token, start_date) do
+    started_at = parse_subscription_start_date(subscription)
+    Logger.info("Created PENDING subscription for user #{user.id}, starts #{start_date}")
+    save_local_subscription(user, subscription, plan_variation_key, card_token, started_at)
+  end
+
+  # Parse the subscription start date - nil returns current time
+  defp parse_subscription_start_date(%{"start_date" => nil}), do: DateTime.utc_now() |> DateTime.truncate(:second)
+
+  # Parse YYYY-MM-DD date format (Square's pending subscription format)
+  defp parse_subscription_start_date(%{"start_date" => date_string}) when is_binary(date_string) do
+    with {:error, _} <- Date.from_iso8601(date_string),
+         {:error, _} <- DateTime.from_iso8601(date_string) do
+      DateTime.utc_now() |> DateTime.truncate(:second)
+    else
+      {:ok, date} -> DateTime.new!(date, ~T[00:00:00], "Etc/UTC")
+      {:ok, datetime, _offset} -> datetime
+    end
+  end
+
+  defp parse_subscription_start_date(_), do: DateTime.utc_now() |> DateTime.truncate(:second)
+
+  # Activate the user's subscription (status tracked in Subscription schema)
+  defp activate_user_subscription(_user) do
+    {:ok, :subscription_tracked_in_subscription_schema}
+  end
+
+  # Save subscription record locally
+  defp save_local_subscription(user, subscription, plan_variation_key, card_token, started_at) do
+    # Convert plan_id to string if it's an atom
+    plan_id_string =
+      if is_atom(plan_variation_key) do
+        Atom.to_string(plan_variation_key)
+      else
+        plan_variation_key
+      end
+
+    attrs = %{
+      user_id: user.id,
+      plan_id: plan_id_string,
+      status: subscription["status"] || "ACTIVE",
+      card_id: card_token,
+      square_subscription_id: subscription["id"],
+      started_at: started_at
+    }
+
+    with {:ok, sub} <- create_subscription_record(attrs),
+         {:ok, synced_sub} <- sync_subscription_from_square(sub) do
+      Logger.info("Created and synced subscription: #{subscription["id"]}, next_billing_at: #{inspect(synced_sub.next_billing_at)}")
+      {:ok, synced_sub}
+    else
+      {:ok, sub} ->
+        # Sync failed but subscription was created
+        Logger.info("Created subscription record: #{subscription["id"]} (sync failed)")
+        {:ok, sub}
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        handle_failed_subscription_save(user.id, subscription, plan_variation_key, card_token, changeset)
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  # Create the subscription record
+  defp create_subscription_record(attrs) do
+    %Subscription{}
+    |> Subscription.changeset(attrs)
+    |> Repo.insert()
+  end
+
+  # Handle failed subscription save
+  defp handle_failed_subscription_save(
+         user_id,
+         subscription,
+         plan_variation_key,
+         card_token,
+         changeset
+       ) do
+    Logger.error("Failed to save subscription record: #{inspect(changeset.errors)}")
+
+    # Convert plan_id to string if it's an atom
+    plan_id_string =
+      if is_atom(plan_variation_key) do
+        Atom.to_string(plan_variation_key)
+      else
+        plan_variation_key
+      end
+
+    # Store failed record info for later reprocessing
+    store_failed_subscription_sync(
+      user_id,
+      subscription,
+      plan_id_string,
+      card_token
+    )
+
+    # Still return success since subscription exists in Square and user is activated
+    {:ok,
+     %{
+       square_subscription_id: subscription["id"],
+       status: subscription["status"] || "ACTIVE",
+       plan_id: plan_id_string,
+       user_activated: true
+     }}
+  end
+
+  @doc """
+  Cancel a user's subscription.
+  Returns immediately with success or failure.
+  """
+  def cancel_subscription(%User{} = user) do
+    case get_active_subscription(user) do
+      nil ->
+        {:error, :no_subscription}
+
+      subscription ->
+        cancel_user_subscription(user, subscription)
+    end
+  end
+
+  # Cancel subscription that has a Square subscription ID
+  defp cancel_user_subscription(
+         user,
+         %Subscription{square_subscription_id: square_id} = subscription
+       )
+       when not is_nil(square_id) do
+    case SquareClient.Subscriptions.cancel(square_id) do
+      {:ok, _result} ->
+        process_successful_cancellation(user, subscription, square_id)
+
+      {:error, reason} ->
+        Logger.error("Failed to cancel Square subscription: #{inspect(reason)}")
+        {:error, :cancellation_failed}
+    end
+  end
+
+  # Cancel local subscription only (no Square subscription)
+  defp cancel_user_subscription(user, %Subscription{square_subscription_id: nil} = subscription) do
+    # Just mark the local subscription as canceled
+    {:ok, sub} =
+      subscription
+      |> Subscription.changeset(%{
+        status: "CANCELED",
+        canceled_at: DateTime.utc_now() |> DateTime.truncate(:second)
+      })
+      |> Repo.update()
+
+    Logger.info("Canceled local subscription for user #{user.id}")
+    {:ok, sub}
+  end
+
+  defp process_successful_cancellation(_user, subscription, square_id) do
+    # Mark as canceled
+    {:ok, sub} =
+      subscription
+      |> Subscription.changeset(%{
+        status: Constants.square_status_canceled(),
+        canceled_at: DateTime.utc_now() |> DateTime.truncate(:second)
+      })
+      |> Repo.update()
+
+    Logger.info("Canceled Square subscription: #{square_id}")
+    {:ok, sub}
+  end
+
+  @doc """
+  Sync subscription data from Square and update local database.
+  """
+  def sync_subscription_from_square(subscription) do
+    SquareClient.Subscriptions.Context.sync_from_square(subscription, Repo)
+  end
+
+  @doc """
+  Get a user's active subscription.
+  Optionally syncs with Square if data is stale or missing.
+  """
+  def get_active_subscription(%User{} = user, opts \\ []) do
+    sync? = Keyword.get(opts, :sync, false)
+
+    subscription = Subscription.get_active_for_user(user)
+
+    # Sync with Square if requested and subscription exists
+    with true <- sync? && subscription && should_sync?(subscription),
+         {:ok, updated_sub} <- sync_subscription_from_square(subscription) do
+      updated_sub
+    else
+      _ -> subscription
+    end
+  end
+
+  # Check if we should sync (missing data or approaching renewal)
+  defp should_sync?(subscription) do
+    SquareClient.Subscriptions.Context.should_sync?(subscription)
+  end
+
+  @doc """
+  Check if a user has an active premium subscription.
+  Checks the subscription record status.
+  Returns false if subscription is past_due (payment failed) or expired.
+  """
+  def has_premium?(%User{} = user) do
+    case get_active_subscription(user) do
+      nil ->
+        false
+
+      subscription ->
+        denied_statuses = [
+          Constants.status_past_due(),
+          Constants.status_canceled(),
+          Constants.status_inactive()
+        ]
+
+        case subscription.status in denied_statuses do
+          true -> false
+          false -> check_one_time_purchase_expiration(user)
+        end
+    end
+  end
+
+  defp check_one_time_purchase_expiration(user) do
+    case get_active_subscription(user) do
+      nil -> true
+      %{square_subscription_id: id} when not is_nil(id) -> true
+      %{next_billing_at: nil} -> true
+      %{next_billing_at: expires_at} -> DateTime.compare(expires_at, DateTime.utc_now()) == :gt
+    end
+  end
+
+  @doc """
+  Process a one-time payment using the payment service.
+  Only payments go through the payment service for security.
+  """
+  def process_payment(%User{} = user, amount, currency, source_id, opts \\ []) do
+    with {:ok, customer_id} <- get_or_create_customer(user) do
+      # Use payment service for actual payment processing
+      case SquareClient.Payments.create(
+             source_id,
+             amount,
+             currency,
+             Keyword.merge(opts,
+               customer_id: customer_id,
+               reference_id: "pmt:#{user.id}:#{:rand.uniform(999_999)}",
+               note: opts[:note] || "{{MODULE}} payment"
+             )
+           ) do
+        {:ok, payment} ->
+          Logger.info("Payment successful: #{payment["id"]} for #{amount} #{currency}")
+          {:ok, payment}
+
+        {:error, {:card_declined, message}} ->
+          Logger.error("Card declined: #{message}")
+          {:error, {:card_declined, message}}
+
+        {:error, reason} ->
+          Logger.error("Payment failed: #{inspect(reason)}")
+          {:error, :payment_failed}
+      end
+    end
+  end
+
+  @doc """
+  Process a one-time purchase for temporary premium access.
+  Unlike subscriptions, these don't auto-renew.
+
+  ## Parameters
+  - user: The user making the purchase
+  - duration_days: How many days of access to grant (e.g., 30, 365)
+  - amount: Payment amount in cents
+  - source_id: Payment source (card nonce or saved card ID)
+  """
+  def purchase_one_time_access(%User{} = user, duration_days, amount, source_id) do
+    with {:ok, customer_id} <- get_or_create_customer(user),
+         {:ok, payment} <-
+           SquareClient.Payments.create_one_time(
+             customer_id,
+             source_id,
+             amount,
+             description: "#{duration_days}-day premium access",
+             app_name: :{{APP}}
+           ) do
+      # Calculate expiration date
+      started_at = DateTime.utc_now() |> DateTime.truncate(:second)
+      expires_at = DateTime.add(started_at, duration_days, :day) |> DateTime.truncate(:second)
+
+      # Create subscription record for one-time pass
+      {:ok, subscription} =
+        %Subscription{}
+        |> Subscription.changeset(%{
+          user_id: user.id,
+          plan_id: "premium_week_pass",
+          status: Constants.square_status_active(),
+          started_at: started_at,
+          next_billing_at: expires_at,
+          square_subscription_id: nil,
+          card_id: nil,
+          payment_id: payment[:payment_id] || payment["id"]
+        })
+        |> Repo.insert()
+
+      Logger.info(
+        "Granted #{duration_days}-day premium access to user #{user.id}, expires #{expires_at}"
+      )
+
+      {:ok,
+       %{
+         payment: payment,
+         subscription: subscription,
+         expires_at: expires_at,
+         duration_days: duration_days
+       }}
+    else
+      {:error, {:card_declined, message}} ->
+        {:error, {:card_declined, message}}
+
+      {:error, :api_unavailable} ->
+        Logger.error("One-time payment failed: API unavailable")
+        {:error, "Payment service is temporarily unavailable. Please try again later."}
+
+      {:error, reason} ->
+        Logger.error("One-time payment failed: #{inspect(reason)}")
+        {:error, "Payment failed. Please try again."}
+    end
+  end
+
+  @doc """
+  Handle webhook events from Square.
+  Square sends these events for subscription lifecycle:
+  - invoice.payment_made: When a subscription payment succeeds (monthly renewal)
+  - invoice.updated: When invoice status changes
+  - subscription.updated: When subscription details change (including next billing date)
+  """
+  def handle_webhook_event(event_type, data) do
+    case event_type do
+      "subscription.created" ->
+        handle_subscription_created(data)
+
+      "subscription.updated" ->
+        handle_subscription_updated(data)
+
+      "subscription.canceled" ->
+        handle_subscription_canceled(data)
+
+      "invoice.payment_made" ->
+        # This fires when Square successfully charges for a subscription renewal
+        handle_invoice_payment_made(data)
+
+      "invoice.updated" ->
+        handle_invoice_updated(data)
+
+      "invoice.payment_failed" ->
+        # This fires when a subscription payment fails (card declined, etc.)
+        handle_invoice_payment_failed(data)
+
+      "payment.created" ->
+        handle_payment_created(data)
+
+      _ ->
+        Logger.info("Unhandled webhook event type: #{event_type}")
+        :ok
+    end
+  end
+
+  defp handle_subscription_created(data) do
+    subscription_data = data["object"]["subscription"]
+
+    # Find subscription by Square ID and update
+    case Repo.get_by(Subscription, square_subscription_id: subscription_data["id"]) do
+      nil ->
+        Logger.warning(
+          "Subscription created webhook for unknown subscription: #{subscription_data["id"]}"
+        )
+
+        :ok
+
+      subscription ->
+        subscription
+        |> Subscription.changeset(%{
+          status: subscription_data["status"],
+          started_at: subscription_data["start_date"]
+        })
+        |> Repo.update()
+
+        :ok
+    end
+  end
+
+  defp handle_subscription_updated(data) do
+    subscription_data = data["object"]["subscription"]
+
+    case Repo.get_by(Subscription, square_subscription_id: subscription_data["id"]) do
+      nil ->
+        Logger.warning(
+          "Subscription updated webhook for unknown subscription: #{subscription_data["id"]}"
+        )
+
+        :ok
+
+      subscription ->
+        subscription
+        |> Subscription.changeset(%{
+          status: subscription_data["status"],
+          next_billing_at: subscription_data["charged_through_date"]
+        })
+        |> Repo.update()
+
+        :ok
+    end
+  end
+
+  # Store failed subscription sync data for later reprocessing
+  defp store_failed_subscription_sync(user_id, square_subscription, plan_id, card_token) do
+    # For now, log it with a specific format that can be parsed later
+    # In production, you'd want to store this in a database table or queue
+    Logger.warning("""
+    FAILED_SUBSCRIPTION_SYNC:
+    User ID: #{user_id}
+    Square Subscription ID: #{square_subscription["id"]}
+    Status: #{square_subscription["status"]}
+    Plan ID: #{plan_id}
+    Card Token: #{card_token}
+    Start Date: #{square_subscription["start_date"]}
+    ---
+    This subscription is ACTIVE in Square but failed to save locally.
+    User has been granted premium access.
+    Manual sync required or will sync on next webhook.
+    """)
+
+    # You could also send an admin notification here
+    # Or store in a "pending_sync" table
+    # Or push to a background job queue
+  end
+
+  defp handle_subscription_canceled(data) do
+    subscription_data = data["object"]["subscription"]
+
+    subscription_data["id"]
+    |> get_subscription_by_square_id()
+    |> process_subscription_cancellation(subscription_data)
+  end
+
+  defp process_subscription_cancellation(nil, subscription_data) do
+    Logger.warning("Subscription canceled webhook for unknown subscription: #{subscription_data["id"]}")
+    :ok
+  end
+
+  defp process_subscription_cancellation(subscription, subscription_data) do
+    canceled_at = subscription_data["canceled_date"] || DateTime.utc_now() |> DateTime.truncate(:second)
+
+    {:ok, _updated} =
+      subscription
+      |> Subscription.changeset(%{status: "CANCELED", canceled_at: canceled_at})
+      |> Repo.update()
+
+    user = Repo.get!(Accounts.User, subscription.user_id)
+
+    log_cancellation_reason(subscription_data["id"], subscription_data["cancellation_reason"], user.id)
+    :ok
+  end
+
+  defp log_cancellation_reason(subscription_id, "PAYMENT_FAILURE", user_id) do
+    Logger.warning("Subscription #{subscription_id} canceled due to payment failures for user #{user_id}")
+  end
+
+  defp log_cancellation_reason(subscription_id, _reason, user_id) do
+    Logger.info("Subscription #{subscription_id} canceled for user #{user_id}")
+  end
+
+  defp handle_invoice_payment_made(data) do
+    # This webhook is sent when a subscription payment is successfully processed
+    invoice = data["object"]["invoice"]
+    subscription_id = invoice["subscription_id"]
+
+    Logger.info("Invoice payment made for subscription: #{subscription_id}")
+
+    subscription_id
+    |> get_subscription_by_square_id()
+    |> process_payment_made_for_subscription(subscription_id)
+  end
+
+  defp get_subscription_by_square_id(subscription_id) do
+    SquareClient.Subscriptions.Context.get_by_square_id(subscription_id, Subscription, Repo)
+  end
+
+  defp process_payment_made_for_subscription(nil, subscription_id) do
+    Logger.warning("Invoice payment for unknown subscription: #{subscription_id}")
+    :ok
+  end
+
+  defp process_payment_made_for_subscription(subscription, subscription_id) do
+    case sync_subscription_from_square(subscription) do
+      {:ok, updated} ->
+        handle_successful_payment_sync(updated, subscription_id)
+
+      {:error, reason} ->
+        Logger.error("Failed to sync subscription after payment: #{inspect(reason)}")
+        :ok
+    end
+  end
+
+  defp handle_successful_payment_sync(updated, subscription_id) do
+    Logger.info(
+      "Updated subscription #{subscription_id} after payment - next billing: #{updated.next_billing_at}"
+    )
+
+    updated.user_id
+    |> Accounts.get_user!()
+    |> restore_premium_if_past_due()
+
+    :ok
+  end
+
+  defp restore_premium_if_past_due(%User{} = user) do
+    # Check if user has a past due subscription
+    past_due_status = Constants.status_past_due()
+
+    case get_active_subscription(user) do
+      %{status: status} = subscription when status == past_due_status ->
+        # Payment succeeded after being past due - update subscription to active
+        subscription
+        |> Ecto.Changeset.change(%{status: Constants.status_active()})
+        |> Repo.update()
+
+        Logger.info("User #{user.id} subscription restored to active after successful payment")
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp handle_invoice_updated(data) do
+    invoice = data["object"]["invoice"]
+
+    # Log for monitoring but don't necessarily need to act on all updates
+    Logger.info("Invoice updated: #{invoice["id"]} - Status: #{invoice["status"]}")
+
+    # If invoice is related to a subscription and is PAID, update next billing
+    if invoice["subscription_id"] && invoice["status"] == "PAID" do
+      handle_invoice_payment_made(data)
+    end
+
+    :ok
+  end
+
+  defp handle_invoice_payment_failed(data) do
+    # This webhook is sent when a subscription payment fails (card declined, expired, etc.)
+    invoice = data["object"]["invoice"]
+
+    invoice["subscription_id"]
+    |> process_failed_payment()
+  end
+
+  defp process_failed_payment(nil) do
+    Logger.warning("Payment failed webhook received with no subscription ID")
+    :ok
+  end
+
+  defp process_failed_payment(subscription_id) do
+    Logger.warning("Invoice payment FAILED for subscription: #{subscription_id}")
+
+    subscription_id
+    |> get_subscription_by_square_id()
+    |> process_payment_failed_for_subscription(subscription_id)
+  end
+
+  defp process_payment_failed_for_subscription(nil, subscription_id) do
+    Logger.warning("Payment failed for unknown subscription: #{subscription_id}")
+    :ok
+  end
+
+  defp process_payment_failed_for_subscription(subscription, subscription_id) do
+    case sync_subscription_from_square(subscription) do
+      {:ok, updated} ->
+        handle_failed_payment_sync(updated, subscription_id)
+
+      {:error, reason} ->
+        Logger.error("Failed to sync subscription after payment failure: #{inspect(reason)}")
+        :ok
+    end
+  end
+
+  defp handle_failed_payment_sync(updated, subscription_id) do
+    Logger.info(
+      "Updated subscription #{subscription_id} after failed payment - status: #{updated.status}"
+    )
+
+    updated.user_id
+    |> Accounts.get_user!()
+    |> maybe_downgrade_for_status(updated.status)
+
+    :ok
+  end
+
+  # Downgrade for delinquent/unpaid/failed status (status tracked in Subscription schema)
+  defp maybe_downgrade_for_status(user, status)
+       when status in ["DELINQUENT", "UNPAID", "PAYMENT_FAILED"] do
+    Logger.warning("User #{user.id} subscription status: #{status} - access will be limited")
+    :ok
+  end
+
+  # No downgrade needed for other statuses
+  defp maybe_downgrade_for_status(_user, _status), do: :ok
+
+  defp handle_payment_created(data) do
+    # Log successful payments
+    payment = data["object"]["payment"]
+
+    Logger.info(
+      "Payment processed: #{payment["id"]} for #{payment["amount_money"]["amount"]} #{payment["amount_money"]["currency"]}"
+    )
+
+    :ok
+  end
+
+  @doc """
+  List available subscription plans.
+  """
+  def list_subscription_plans do
+    case SquareClient.Catalog.list_subscription_plans() do
+      {:ok, %{"objects" => plans}} -> {:ok, plans}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @doc """
+  Get subscription usage stats for a user.
+  """
+  def get_usage_stats(%User{} = user) do
+    subscription = get_active_subscription(user)
+
+    %{
+      has_premium: subscription != nil && subscription.status == "ACTIVE",
+      subscription_status: subscription && subscription.status,
+      next_billing_date: subscription && subscription.next_billing_at,
+      member_since: subscription && subscription.started_at
+    }
+  end
+end

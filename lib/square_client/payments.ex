@@ -36,32 +36,10 @@ defmodule SquareClient.Payments do
 
   require Logger
 
-  # Get API configuration
-  defp api_url do
-    case Application.get_env(:square_client, :api_url) do
-      nil ->
-        # Only fall back to environment variables if not explicitly set to nil
-        # This prevents tests from accidentally using real APIs
-        case System.get_env("SQUARE_ENVIRONMENT", "sandbox") do
-          "test" -> raise "Square API URL must be configured in test environment"
-          "production" -> "https://connect.squareup.com/v2"
-          _ -> "https://connect.squareupsandbox.com/v2"
-        end
+  defp api_url, do: SquareClient.Config.api_url!()
+  defp access_token, do: SquareClient.Config.access_token!()
 
-      url ->
-        url
-    end
-  end
-
-  defp access_token do
-    Application.get_env(:square_client, :access_token) ||
-      System.get_env("SQUARE_ACCESS_TOKEN")
-  end
-
-  defp location_id do
-    Application.get_env(:square_client, :location_id) ||
-      System.get_env("SQUARE_LOCATION_ID")
-  end
+  defp location_id, do: SquareClient.Config.location_id!()
 
   defp request_headers do
     [

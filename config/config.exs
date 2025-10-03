@@ -5,7 +5,7 @@ import Config
 
 # Default configuration (sandbox)
 config :square_client,
-  api_url: System.get_env("SQUARE_API_URL"),
+  api_url: "https://connect.squareupsandbox.com/v2",
   access_token: System.get_env("SQUARE_ACCESS_TOKEN")
 
 # Import environment specific config
