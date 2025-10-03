@@ -655,4 +655,36 @@ defmodule SquareClient.Plans do
     |> Map.delete("sandbox_variation_id")
     |> Map.delete("production_variation_id")
   end
+
+  @doc """
+  Get features for a specific plan.
+  Returns a list of feature atoms or nil if plan doesn't exist.
+  """
+  def get_plan_features(plan_id) when is_binary(plan_id) do
+    app = Application.get_env(:square_client, :app_name, :square_client)
+    plans = get_plans(app)
+
+    case find_plan_by_id(plans, plan_id) do
+      nil -> nil
+      plan -> Map.get(plan, "features", [])
+    end
+  end
+
+  def get_plan_features(_), do: nil
+
+  defp find_plan_by_id(plans, plan_id) do
+    Enum.find_value(plans, fn
+      {_key, %{"id" => ^plan_id} = plan} ->
+        plan
+
+      {_key, %{"variations" => variations} = plan} ->
+        if Enum.any?(variations, fn {_vkey, v} -> v["id"] == plan_id end) do
+          # If it's a variation ID, return the parent plan
+          plan
+        end
+
+      _ ->
+        nil
+    end)
+  end
 end

@@ -116,6 +116,10 @@ defmodule Mix.Tasks.SquareClient.Install do
     create_square_payment_hook()
     update_config(module_prefix)
 
+    # Generate auth helpers using the separate task
+    Mix.shell().info("\n📔 Generating subscription auth helpers...")
+    Mix.Task.run("square_client.gen.auth", [])
+
     # Automate setup
     update_application(module_prefix)
     update_router(module_prefix)

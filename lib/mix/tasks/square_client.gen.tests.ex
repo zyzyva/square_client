@@ -104,6 +104,12 @@ defmodule Mix.Tasks.SquareClient.Gen.Tests do
     # Create the test directories
     create_test_directories(app_path)
 
+    # Generate auth helper tests if auth helpers exist
+    if File.exists?("lib/#{app_path}_web/subscription_auth.ex") do
+      Mix.shell().info("\n📝 Generating subscription auth tests...")
+      Mix.Task.run("square_client.gen.auth_tests", [])
+    end
+
     # Generate each test file
     for {template_path, dest_path} <- @test_files do
       generate_test_file(template_path, dest_path, %{
