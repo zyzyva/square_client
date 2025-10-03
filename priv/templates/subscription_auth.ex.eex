@@ -1,0 +1,75 @@
+defmodule <%= web_module %>.SubscriptionAuth do
+  @moduledoc """
+  Subscription-based access control for <%= app_module %>.
+
+  Provides plugs and helpers for enforcing subscription requirements.
+  """
+
+  import SquareClient.SubscriptionAuth
+  alias <%= app_module %>.Payments
+
+  @doc """
+  Plug that requires premium subscription.
+  Use in router pipelines or controllers.
+  """
+  def require_premium(conn, opts \\ []) do
+    require_premium_subscription(conn, [
+      payments_module: Payments,
+      redirect_to: "/subscription"
+    ] ++ opts)
+  end
+
+  @doc """
+  Plug that requires a specific subscription plan.
+  """
+  def require_plan(conn, plan) when is_binary(plan) do
+    require_specific_plan(conn,
+      payments_module: Payments,
+      plan: plan,
+      redirect_to: "/subscription"
+    )
+  end
+
+  @doc """
+  Plug for API endpoints that require subscription.
+  Returns 402 Payment Required if not subscribed.
+  """
+  def require_api_subscription(conn, opts \\ []) do
+    require_api_access(conn, [
+      payments_module: Payments
+    ] ++ opts)
+  end
+
+  @doc """
+  Assigns subscription status to conn.
+  Use in pipelines where you want conditional features.
+  """
+  def load_subscription(conn, _opts \\ []) do
+    assign_subscription_status(conn, payments_module: Payments)
+  end
+
+  @doc """
+  Check if current user has premium subscription.
+  Useful in controllers and templates.
+  """
+  def has_premium?(conn_or_user) do
+    user = case conn_or_user do
+      %Plug.Conn{} = conn -> conn.assigns[:current_user]
+      user -> user
+    end
+
+    user && Payments.has_premium?(user)
+  end
+
+  @doc """
+  Check if current user has specific plan.
+  """
+  def has_plan?(conn_or_user, plan) do
+    user = case conn_or_user do
+      %Plug.Conn{} = conn -> conn.assigns[:current_user]
+      user -> user
+    end
+
+    user && Payments.has_plan?(user, plan)
+  end
+end

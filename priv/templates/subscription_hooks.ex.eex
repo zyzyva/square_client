@@ -1,0 +1,27 @@
+defmodule <%= web_module %>.SubscriptionHooks do
+  @moduledoc """
+  LiveView hooks for subscription-based access control.
+
+  ## Usage in Router
+
+      live_session :premium_features,
+        on_mount: [
+          {<%= web_module %>.UserAuth, :ensure_authenticated},
+          {<%= web_module %>.SubscriptionHooks, :require_premium}
+        ] do
+        live "/analytics", AnalyticsLive, :index
+      end
+
+      # For mixed access pages
+      live_session :with_subscription_status,
+        on_mount: [
+          {<%= web_module %>.UserAuth, :ensure_authenticated},
+          {<%= web_module %>.SubscriptionHooks, :default}
+        ] do
+        live "/contacts", ContactLive.Index, :index
+      end
+  """
+
+  use SquareClient.SubscriptionHooks,
+    payments_module: <%= app_module %>.Payments
+end

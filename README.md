@@ -19,6 +19,9 @@ A flexible Elixir client library for Square API integration, focused on subscrip
 - **Reusable subscription schema** - Drop-in Ecto schema with Square sync capabilities
 - **Prorated refund calculations** - Automatic refund processing for subscription cancellations
 - **One-time purchase support** - Sell passes and time-limited access
+- **Subscription access control generators** - Complete auth system for premium features
+- **LiveView and Plug authentication** - Protect routes and LiveViews based on subscription status
+- **Comprehensive test generators** - 36 pre-built tests for subscription authentication
 - **Synchronous REST API** - Immediate feedback for payment processing
 - **Environment-aware configuration** - Automatic sandbox/production switching
 - **Runtime configuration validation** - Catch missing config at app startup with helpful errors
@@ -63,6 +66,23 @@ This automatically generates:
 - ✅ Configuration files (`config/config.exs` and `config/prod.exs`)
 
 The installer auto-detects your Phoenix app structure and assumes standard `gen.auth` conventions (User module, user_id foreign key).
+
+**Optional: Generate authentication helpers**
+
+```bash
+# Add subscription-based access control
+mix square_client.gen.auth
+
+# Generate comprehensive test suite
+mix square_client.gen.auth_tests
+```
+
+This adds:
+- ✅ Subscription auth plugs for HTTP routes
+- ✅ LiveView hooks for real-time authentication
+- ✅ Template helpers for conditional rendering
+- ✅ 36 pre-built tests for complete coverage
+- ✅ Test fixtures for subscriptions
 
 **Step 4: Complete the manual steps**
 
@@ -161,6 +181,309 @@ end
 ```
 
 That's it! You now have a complete Square integration with subscriptions, webhooks, and refunds.
+
+## Subscription Access Control
+
+The library includes powerful generators for implementing subscription-based access control in your Phoenix application. This provides a complete authentication and authorization system for premium features.
+
+### Quick Setup
+
+After running the main installer, generate the auth helpers:
+
+```bash
+# Generate authentication helpers
+mix square_client.gen.auth
+
+# Generate comprehensive test suite
+mix square_client.gen.auth_tests
+```
+
+### What Gets Generated
+
+#### Authentication Helpers (`mix square_client.gen.auth`)
+
+1. **Subscription Auth Module** (`lib/your_app_web/subscription_auth.ex`)
+   - Plug-based authentication for HTTP routes
+   - Helper functions for templates
+   - API access control with 402 Payment Required responses
+
+2. **LiveView Hooks** (`lib/your_app_web/subscription_hooks.ex`)
+   - `on_mount` hooks for LiveView authentication
+   - Automatic subscription status assignment
+   - Plan-specific access control
+
+#### Test Suite (`mix square_client.gen.auth_tests`)
+
+1. **Comprehensive Test Coverage** (36 tests total)
+   - Plug authentication tests
+   - LiveView hook tests
+   - Context function tests
+   - Test fixtures for subscriptions
+
+### Manual Setup Required
+
+After generating the auth helpers, add these functions to your Payments context:
+
+```elixir
+# In lib/your_app/payments/payments.ex
+
+# Add ID-based overload for has_premium?
+def has_premium?(user_id) when is_integer(user_id) do
+  case Accounts.get_user!(user_id) do
+    nil -> false
+    user -> has_premium?(user)
+  end
+rescue
+  Ecto.NoResultsError -> false
+end
+
+def has_premium?(_), do: false
+
+# Check if user has a specific plan
+def has_plan?(%User{} = user, plan_id) when is_binary(plan_id) do
+  case get_active_subscription(user) do
+    nil -> false
+    subscription -> subscription.plan_id == plan_id && subscription.status == "ACTIVE"
+  end
+end
+
+def has_plan?(user_id, plan_id) when is_integer(user_id) and is_binary(plan_id) do
+  case Accounts.get_user!(user_id) do
+    nil -> false
+    user -> has_plan?(user, plan_id)
+  end
+rescue
+  Ecto.NoResultsError -> false
+end
+
+def has_plan?(_, _), do: false
+
+# Get current plan for a user
+def get_current_plan(%User{} = user) do
+  case get_active_subscription(user) do
+    nil -> "free"
+    %{status: "ACTIVE", plan_id: plan_id} -> plan_id
+    _ -> "free"
+  end
+end
+
+def get_current_plan(user_id) when is_integer(user_id) do
+  case Accounts.get_user!(user_id) do
+    nil -> "free"
+    user -> get_current_plan(user)
+  end
+rescue
+  Ecto.NoResultsError -> "free"
+end
+
+def get_current_plan(_), do: "free"
+
+# Check if user has access to a feature
+def has_feature?(%User{} = user, feature) when is_atom(feature) or is_binary(feature) do
+  plan_id = get_current_plan(user)
+
+  case SquareClient.Plans.get_plan_features(plan_id) do
+    nil -> false
+    features when is_list(features) ->
+      feature_str = to_string(feature)
+      Enum.member?(features, feature_str)
+    _ -> false
+  end
+end
+
+def has_feature?(user_id, feature) when is_integer(user_id) do
+  case Accounts.get_user!(user_id) do
+    nil -> false
+    user -> has_feature?(user, feature)
+  end
+rescue
+  Ecto.NoResultsError -> false
+end
+
+def has_feature?(_, _), do: false
+```
+
+### Usage Examples
+
+#### Router (Plugs)
+
+```elixir
+# In router.ex
+import YourAppWeb.SubscriptionAuth
+
+# Create a pipeline for premium routes
+pipeline :require_premium do
+  plug :require_premium
+end
+
+# Protect entire scopes
+scope "/premium", YourAppWeb do
+  pipe_through [:browser, :require_authenticated_user, :require_premium]
+
+  get "/analytics", AnalyticsController, :index
+  get "/export", ExportController, :new
+end
+
+# Or protect individual routes
+scope "/", YourAppWeb do
+  pipe_through [:browser, :require_authenticated_user]
+
+  get "/settings", SettingsController, :index
+  get "/settings/billing", SettingsController, :billing |> require_premium()
+end
+
+# Require specific plans
+pipeline :require_yearly_plan do
+  plug :require_plan, "premium_yearly"
+end
+
+# API endpoints with 402 Payment Required
+scope "/api", YourAppWeb do
+  pipe_through [:api, :authenticate_api]
+
+  post "/export", ApiController, :export |> require_api_subscription()
+end
+```
+
+#### LiveView (Hooks)
+
+```elixir
+# In router.ex
+
+# Protect entire live_session
+live_session :premium_features,
+  on_mount: [
+    {YourAppWeb.UserAuth, :ensure_authenticated},
+    {YourAppWeb.SubscriptionHooks, :require_premium}
+  ] do
+  live "/analytics", AnalyticsLive, :index
+  live "/reports", ReportsLive, :index
+end
+
+# Require specific plan
+live_session :yearly_features,
+  on_mount: [
+    {YourAppWeb.UserAuth, :ensure_authenticated},
+    {YourAppWeb.SubscriptionHooks, {:require_plan, "premium_yearly"}}
+  ] do
+  live "/advanced-analytics", AdvancedAnalyticsLive, :index
+end
+
+# Assign subscription status without enforcing
+live_session :mixed_access,
+  on_mount: [
+    {YourAppWeb.UserAuth, :ensure_authenticated},
+    {YourAppWeb.SubscriptionHooks, :assign_subscription}
+  ] do
+  live "/dashboard", DashboardLive, :index
+end
+```
+
+#### Templates
+
+```heex
+<!-- In templates -->
+<%= if YourAppWeb.SubscriptionAuth.has_premium?(@conn) do %>
+  <.link navigate="/premium-feature" class="btn-primary">
+    Access Premium Feature
+  </.link>
+<% else %>
+  <.link navigate="/subscription" class="btn-upgrade">
+    Upgrade to Premium
+  </.link>
+<% end %>
+
+<!-- Check specific plans -->
+<%= if YourAppWeb.SubscriptionAuth.has_plan?(@conn, "premium_yearly") do %>
+  <div class="yearly-benefits">
+    You have yearly access!
+  </div>
+<% end %>
+
+<!-- In LiveView templates, use assigns -->
+<%= if @has_premium? do %>
+  <div class="premium-content">
+    <!-- Premium features here -->
+  </div>
+<% else %>
+  <div class="upgrade-prompt">
+    <p>This feature requires a premium subscription</p>
+    <.link navigate="/subscription">Upgrade Now</.link>
+  </div>
+<% end %>
+```
+
+#### Context Usage
+
+```elixir
+# In your business logic
+defmodule YourApp.Analytics do
+  alias YourApp.Payments
+
+  def export_data(user) do
+    if Payments.has_feature?(user, :advanced_export) do
+      # Perform export
+      {:ok, generate_export(user)}
+    else
+      {:error, :premium_required}
+    end
+  end
+
+  def get_analytics_limit(user) do
+    case Payments.get_current_plan(user) do
+      "premium_yearly" -> 10_000
+      "premium_monthly" -> 1_000
+      "free" -> 100
+    end
+  end
+end
+```
+
+### Testing
+
+The generated tests provide comprehensive coverage:
+
+```bash
+# Run just the auth tests
+mix test test/your_app_web/subscription_auth_test.exs \
+         test/your_app_web/subscription_hooks_test.exs \
+         test/your_app/payments_auth_functions_test.exs
+
+# All 36 auth tests should pass
+```
+
+Example test fixture usage:
+
+```elixir
+# In your tests
+import YourApp.SubscriptionFixtures
+
+test "premium feature requires subscription", %{conn: conn} do
+  user = user_fixture()
+  conn = log_in_user(conn, user)
+
+  # Without subscription
+  conn = get(conn, "/premium-feature")
+  assert redirected_to(conn) == "/subscription"
+
+  # With subscription
+  _subscription = active_subscription_fixture(user)
+  conn = get(conn, "/premium-feature")
+  assert html_response(conn, 200)
+end
+```
+
+### Architecture
+
+The auth system uses a layered approach:
+
+1. **Router Level** - Plugs for HTTP request filtering
+2. **LiveView Level** - on_mount hooks for WebSocket connections
+3. **Context Level** - Business logic functions
+4. **Template Level** - Helper functions for UI
+5. **API Level** - 402 Payment Required for API endpoints
+
+This ensures consistent access control across your entire application.
 
 ## Configuration
 
