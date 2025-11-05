@@ -31,6 +31,8 @@ defmodule SquareClient.SubscriptionAuth do
 
   import Plug.Conn
 
+  # Compile-time check for Phoenix availability
+
   @doc """
   Plug that requires user to have an active premium subscription.
 
@@ -50,8 +52,8 @@ defmodule SquareClient.SubscriptionAuth do
       conn
     else
       conn
-      |> Phoenix.Controller.put_flash(:error, message)
-      |> Phoenix.Controller.redirect(to: redirect_path)
+      |> put_flash_if_available(:error, message)
+      |> redirect_if_available(to: redirect_path)
       |> halt()
     end
   end
@@ -77,8 +79,8 @@ defmodule SquareClient.SubscriptionAuth do
       conn
     else
       conn
-      |> Phoenix.Controller.put_flash(:error, message)
-      |> Phoenix.Controller.redirect(to: redirect_path)
+      |> put_flash_if_available(:error, message)
+      |> redirect_if_available(to: redirect_path)
       |> halt()
     end
   end
@@ -106,8 +108,8 @@ defmodule SquareClient.SubscriptionAuth do
       conn
     else
       conn
-      |> Phoenix.Controller.put_flash(:error, message)
-      |> Phoenix.Controller.redirect(to: redirect_path)
+      |> put_flash_if_available(:error, message)
+      |> redirect_if_available(to: redirect_path)
       |> halt()
     end
   end
@@ -130,7 +132,7 @@ defmodule SquareClient.SubscriptionAuth do
     else
       conn
       |> put_status(:payment_required)
-      |> Phoenix.Controller.json(%{
+      |> json_if_available(%{
         error: message,
         upgrade_url: "/subscription"
       })
@@ -186,6 +188,42 @@ defmodule SquareClient.SubscriptionAuth do
 
       true ->
         {:ok, payments_module.get_active_subscription(user)}
+    end
+  end
+
+  # Helper functions to handle Phoenix.Controller availability
+  if Code.ensure_loaded?(Phoenix.Controller) do
+    defp put_flash_if_available(conn, type, message) do
+      Phoenix.Controller.put_flash(conn, type, message)
+    end
+
+    defp redirect_if_available(conn, opts) do
+      Phoenix.Controller.redirect(conn, opts)
+    end
+
+    defp json_if_available(conn, data) do
+      Phoenix.Controller.json(conn, data)
+    end
+  else
+    defp put_flash_if_available(conn, _type, _message) do
+      # When Phoenix isn't available, just pass through the connection
+      conn
+    end
+
+    defp redirect_if_available(conn, opts) do
+      # Basic redirect without Phoenix
+      path = Keyword.get(opts, :to, "/")
+
+      conn
+      |> put_resp_header("location", path)
+      |> send_resp(302, "")
+    end
+
+    defp json_if_available(conn, data) do
+      # Basic JSON response without Phoenix
+      conn
+      |> put_resp_content_type("application/json")
+      |> send_resp(conn.status || 200, JSON.encode!(data))
     end
   end
 end

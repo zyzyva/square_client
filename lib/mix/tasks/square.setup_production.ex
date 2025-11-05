@@ -39,7 +39,7 @@ defmodule Mix.Tasks.Square.SetupProduction do
   """
   use Mix.Task
 
-  alias SquareClient.{Plans, Catalog}
+  alias SquareClient.Catalog
 
   @shortdoc "Create subscription plans in Square PRODUCTION environment"
 
@@ -92,8 +92,8 @@ defmodule Mix.Tasks.Square.SetupProduction do
         IO.puts("✓ Switched to production Square API")
       end
 
-      # Load plans from JSON config
-      plan_configs = Plans.get_plans(app, config_path)
+      # Load raw plans from JSON config (don't transform for environment)
+      plan_configs = load_raw_plans(app, config_path)
 
       # Check what needs to be created
       production_plans = filter_production_unconfigured(plan_configs)
@@ -102,16 +102,36 @@ defmodule Mix.Tasks.Square.SetupProduction do
         IO.puts("\n✅ All plans already have production IDs configured!")
         IO.puts("\nCurrent production configuration:")
         show_production_config(plan_configs)
+
+        if !dry_run do
+          IO.puts("\n🔄 Syncing active status with Square...")
+          sync_production_status(app, plan_configs, config_path)
+        else
+          IO.puts("\n🔄 Would sync active status with Square (dry-run mode)")
+        end
       else
         IO.puts("\n📋 Plans needing production setup:")
 
         Enum.each(production_plans, fn {plan_key, plan_config} ->
-          IO.puts("  - #{plan_config["name"]} (#{plan_key})")
+          if !plan_config["production_base_plan_id"] do
+            IO.puts("  - #{plan_config["name"]} (#{plan_key}) - NEW BASE PLAN NEEDED")
+          else
+            IO.puts(
+              "  - #{plan_config["name"]} (#{plan_key}) - Adding variations to existing plan"
+            )
+          end
 
           if plan_config["variations"] do
             Enum.each(plan_config["variations"], fn {_var_key, var_config} ->
-              if !var_config["production_variation_id"] do
-                IO.puts("    • #{var_config["name"]} variation")
+              cond do
+                !var_config["production_variation_id"] && var_config["active"] != false ->
+                  IO.puts("    • #{var_config["name"]} variation - TO BE CREATED")
+
+                var_config["active"] == false ->
+                  IO.puts("    • #{var_config["name"]} variation - SKIPPED (inactive)")
+
+                true ->
+                  nil
               end
             end)
           end
@@ -124,12 +144,16 @@ defmodule Mix.Tasks.Square.SetupProduction do
           Enum.each(production_plans, fn {plan_key, plan_config} ->
             IO.puts("\n📦 Processing: #{plan_config["name"]}")
 
-            # Create base plan if needed
+            # Use existing base plan or create new one if needed
             production_base_id =
-              if !plan_config["production_base_plan_id"] do
-                create_production_base_plan(app, plan_key, plan_config, config_path)
-              else
+              if plan_config["production_base_plan_id"] do
+                IO.puts(
+                  "  ✓ Using existing production base plan: #{plan_config["production_base_plan_id"]}"
+                )
+
                 plan_config["production_base_plan_id"]
+              else
+                create_production_base_plan(app, plan_key, plan_config, config_path)
               end
 
             # Create variations if base plan exists
@@ -146,6 +170,12 @@ defmodule Mix.Tasks.Square.SetupProduction do
 
           IO.puts("\n✅ Production setup complete!")
           IO.puts("\n📝 Updated square_plans.json with production IDs")
+
+          # Also sync status for all plans including newly created ones
+          IO.puts("\n🔄 Syncing all plan status with Square...")
+          # Reload config to get newly saved IDs
+          updated_plan_configs = load_raw_plans(app, config_path)
+          sync_production_status(app, updated_plan_configs, config_path)
         else
           IO.puts("\n📋 Dry run complete. Run without --dry-run to create these plans.")
         end
@@ -175,18 +205,51 @@ defmodule Mix.Tasks.Square.SetupProduction do
     String.to_atom(app_string)
   end
 
+  defp load_raw_plans(app, config_path) do
+    priv_path = :code.priv_dir(app)
+    path = Path.join(priv_path, config_path)
+
+    case File.read(path) do
+      {:ok, content} ->
+        case JSON.decode(content) do
+          {:ok, %{"plans" => plans}} -> plans
+          _ -> %{}
+        end
+
+      {:error, _} ->
+        %{}
+    end
+  end
+
   defp filter_production_unconfigured(plan_configs) do
     plan_configs
-    |> Enum.filter(fn {_key, config} ->
+    |> Enum.filter(fn {plan_key, config} ->
       # Skip free plans
-      # Check if base plan needs production ID
-      # Or if any variations need production IDs
-      config["type"] != "free" &&
-        (!config["production_base_plan_id"] ||
-           (config["variations"] &&
-              Enum.any?(config["variations"], fn {_var_key, var} ->
-                !var["production_variation_id"]
-              end)))
+      if config["type"] == "free" do
+        false
+      else
+        has_base = config["production_base_plan_id"] != nil
+
+        needs_variations =
+          if config["variations"] do
+            Enum.any?(config["variations"], fn {_var_key, var} ->
+              # Only check active variations
+              var["active"] != false && !var["production_variation_id"]
+            end)
+          else
+            false
+          end
+
+        result = !has_base || needs_variations
+
+        if result do
+          IO.puts(
+            "Plan #{plan_key} needs setup: has_base=#{has_base}, needs_variations=#{needs_variations}"
+          )
+        end
+
+        result
+      end
     end)
     |> Enum.into(%{})
   end
@@ -206,11 +269,66 @@ defmodule Mix.Tasks.Square.SetupProduction do
     end)
   end
 
+  defp sync_production_status(app, plan_configs, _config_path) do
+    # Sync active status and names for all configured production plans and variations
+    Enum.each(plan_configs, fn {_plan_key, config} ->
+      if config["type"] != "free" do
+        prefixed_name = get_prefixed_plan_name(app, config["name"])
+        IO.puts("\n📦 Syncing: #{prefixed_name}")
+
+        # Update base plan name if it has a production ID
+        if config["production_base_plan_id"] do
+          update_plan_name(config["production_base_plan_id"], prefixed_name, "base plan")
+        end
+
+        if config["variations"] do
+          Enum.each(config["variations"], fn {_var_key, variation_config} ->
+            variation_id = variation_config["production_variation_id"]
+            is_active = variation_config["active"] != false
+
+            cond do
+              # Has production ID and should be active - ensure it's active and name is updated
+              variation_id && is_active ->
+                ensure_production_variation_active(variation_id, variation_config["name"])
+                update_plan_name(variation_id, variation_config["name"], "variation")
+
+              # Has production ID but should be inactive - ensure it's deactivated
+              variation_id && !is_active ->
+                ensure_production_variation_inactive(variation_id, variation_config["name"])
+
+              # No production ID and inactive - nothing to do
+              !variation_id && !is_active ->
+                IO.puts(
+                  "  ⏭️  Skipping inactive variation without ID: #{variation_config["name"]}"
+                )
+
+              # No production ID but active - warn that it needs to be created
+              !variation_id && is_active ->
+                IO.puts(
+                  "  ⚠️  Active variation missing production ID: #{variation_config["name"]}"
+                )
+
+                IO.puts("      Run without existing IDs to create this variation")
+
+              true ->
+                nil
+            end
+          end)
+        end
+      end
+    end)
+
+    IO.puts("\n✅ Production sync complete!")
+  end
+
   defp create_production_base_plan(app, plan_key, plan_config, config_path) do
     IO.puts("  📝 Creating production base plan...")
 
+    # Add app prefix to plan name for clarity in Square Dashboard
+    prefixed_name = get_prefixed_plan_name(app, plan_config["name"])
+
     case Catalog.create_base_subscription_plan(%{
-           name: plan_config["name"],
+           name: prefixed_name,
            description: plan_config["description"]
          }) do
       {:ok, result} ->
@@ -229,38 +347,120 @@ defmodule Mix.Tasks.Square.SetupProduction do
 
   defp create_production_variations(app, plan_key, plan_config, base_plan_id, config_path) do
     Enum.each(plan_config["variations"] || %{}, fn {variation_key, variation_config} ->
-      if !variation_config["production_variation_id"] do
-        IO.puts("  📝 Creating production variation: #{variation_config["name"]}")
+      variation_id = variation_config["production_variation_id"]
+      is_active = variation_config["active"] != false
 
-        case Catalog.create_plan_variation(%{
-               base_plan_id: base_plan_id,
-               name: variation_config["name"],
-               cadence: variation_config["cadence"],
-               amount: variation_config["amount"],
-               currency: variation_config["currency"]
-             }) do
-          {:ok, result} ->
-            IO.puts("  ✅ Created variation: #{result.variation_id}")
+      cond do
+        # Has ID and is active - ensure it's active in Square
+        variation_id && is_active ->
+          ensure_production_variation_active(variation_id, variation_config["name"])
 
-            # Update the production ID field in config
-            update_production_variation_id(
-              app,
-              plan_key,
-              variation_key,
-              result.variation_id,
-              config_path
-            )
+        # Has ID but inactive - ensure it's deactivated in Square
+        variation_id && !is_active ->
+          ensure_production_variation_inactive(variation_id, variation_config["name"])
 
-          {:error, reason} ->
-            IO.puts("  ❌ Failed to create variation: #{inspect(reason)}")
-        end
+        # No ID but active - create it
+        !variation_id && is_active ->
+          IO.puts("  📝 Creating production variation: #{variation_config["name"]}")
+
+          case Catalog.create_plan_variation(%{
+                 base_plan_id: base_plan_id,
+                 name: variation_config["name"],
+                 cadence: variation_config["cadence"],
+                 amount: variation_config["amount"],
+                 currency: variation_config["currency"]
+               }) do
+            {:ok, result} ->
+              IO.puts("  ✅ Created variation: #{result.variation_id}")
+
+              # Update the production ID field in config
+              update_production_variation_id(
+                app,
+                plan_key,
+                variation_key,
+                result.variation_id,
+                config_path
+              )
+
+            {:error, reason} ->
+              IO.puts("  ❌ Failed to create variation: #{inspect(reason)}")
+          end
+
+        # No ID and inactive - skip
+        true ->
+          IO.puts("  ⏭️  Skipping inactive variation: #{variation_config["name"]}")
       end
     end)
   end
 
+  defp ensure_production_variation_active(variation_id, name) do
+    case get_catalog_status(variation_id) do
+      {:ok, :active} ->
+        IO.puts("  ✓ Production variation '#{name}' is active: #{variation_id}")
+
+      {:ok, :deleted} ->
+        IO.puts("  🔄 Reactivating variation '#{name}': #{variation_id}")
+        update_catalog_status(variation_id, false)
+
+      {:error, :not_found} ->
+        IO.puts("  ⚠️  Variation '#{name}' not found in Square: #{variation_id}")
+
+      _ ->
+        IO.puts("  ✓ Production variation '#{name}' exists: #{variation_id}")
+    end
+  end
+
+  defp ensure_production_variation_inactive(variation_id, name) do
+    case get_catalog_status(variation_id) do
+      {:ok, :active} ->
+        IO.puts("  🔄 Deactivating variation '#{name}': #{variation_id}")
+        update_catalog_status(variation_id, true)
+
+      {:ok, :deleted} ->
+        IO.puts("  ✓ Variation '#{name}' is already deactivated: #{variation_id}")
+
+      {:error, :not_found} ->
+        IO.puts("  ⏭️  Variation '#{name}' doesn't exist (inactive): #{variation_id}")
+
+      _ ->
+        IO.puts("  ⏭️  Skipping inactive variation '#{name}': #{variation_id}")
+    end
+  end
+
+  defp get_catalog_status(object_id) do
+    case Catalog.get(object_id) do
+      {:ok, %{"present_at_all_locations" => false}} -> {:ok, :deleted}
+      {:ok, _} -> {:ok, :active}
+      {:error, :not_found} -> {:error, :not_found}
+      {:error, _reason} -> {:error, :unknown}
+    end
+  end
+
+  defp update_catalog_status(object_id, should_deactivate) do
+    with {:ok, current_object} <- Catalog.get(object_id) do
+      # Set present_at_all_locations to false to deactivate, true to activate
+      updated_object = Map.put(current_object, "present_at_all_locations", !should_deactivate)
+
+      case update_catalog_object(object_id, updated_object) do
+        :ok ->
+          action = if should_deactivate, do: "Deactivated", else: "Reactivated"
+          IO.puts("    ✅ #{action} successfully")
+          :ok
+
+        {:error, reason} ->
+          IO.puts("    ❌ Failed to update status: #{reason}")
+          {:error, reason}
+      end
+    else
+      {:error, reason} ->
+        IO.puts("    ❌ Failed to get current object: #{inspect(reason)}")
+        {:error, reason}
+    end
+  end
+
   # Helper to update production base plan ID
   defp update_production_base_plan_id(app, plan_key, base_plan_id, config_path) do
-    config = load_config(app, config_path)
+    config = load_raw_config(app, config_path)
 
     updated_config =
       config
@@ -272,7 +472,7 @@ defmodule Mix.Tasks.Square.SetupProduction do
 
   # Helper to update production variation ID
   defp update_production_variation_id(app, plan_key, variation_key, variation_id, config_path) do
-    config = load_config(app, config_path)
+    config = load_raw_config(app, config_path)
 
     updated_config =
       config
@@ -285,7 +485,7 @@ defmodule Mix.Tasks.Square.SetupProduction do
     save_config(app, updated_config, config_path)
   end
 
-  defp load_config(app, config_path) do
+  defp load_raw_config(app, config_path) do
     path = Application.app_dir(app, Path.join("priv", config_path))
 
     case File.read(path) do
@@ -346,5 +546,111 @@ defmodule Mix.Tasks.Square.SetupProduction do
       ["plans", plan_key, "variations", variation_key],
       config["plans"][plan_key]["variations"][variation_key] || %{}
     )
+  end
+
+  defp extract_error_message(%{"errors" => [%{"detail" => detail} | _]}), do: detail
+  defp extract_error_message(%{"errors" => errors}) when is_list(errors), do: "#{inspect(errors)}"
+  defp extract_error_message(body), do: "HTTP error: #{inspect(body)}"
+
+  defp update_plan_name(object_id, new_name, object_type) do
+    with {:ok, current_object} <- Catalog.get(object_id) do
+      current_name = get_object_name(current_object)
+
+      if current_name == new_name do
+        IO.puts("  ✓ #{String.capitalize(object_type)} name is already '#{new_name}'")
+        :ok
+      else
+        IO.puts("  🔄 Updating #{object_type} name from '#{current_name}' to '#{new_name}'")
+
+        # Update the name in the appropriate field based on object type
+        updated_object = update_object_name(current_object, new_name)
+
+        case update_catalog_object(object_id, updated_object) do
+          :ok ->
+            IO.puts("     ✅ Name updated successfully")
+            :ok
+
+          {:error, reason} ->
+            IO.puts("     ❌ Failed to update name: #{reason}")
+            {:error, reason}
+        end
+      end
+    else
+      {:error, reason} ->
+        IO.puts("  ⚠️  Could not check #{object_type} name: #{inspect(reason)}")
+        {:error, reason}
+    end
+  end
+
+  # Common function to update a catalog object in Square
+  defp update_catalog_object(_object_id, updated_object) do
+    body = %{
+      idempotency_key: :crypto.strong_rand_bytes(16) |> Base.encode16(case: :lower),
+      object: updated_object
+    }
+
+    api_url = SquareClient.Config.api_url!()
+    access_token = SquareClient.Config.access_token!()
+
+    case Req.post(
+           "#{api_url}/catalog/object",
+           json: body,
+           headers: [
+             {"Authorization", "Bearer #{access_token}"},
+             {"Square-Version", "2025-01-23"}
+           ]
+         ) do
+      {:ok, %{status: status}} when status in 200..299 ->
+        :ok
+
+      {:ok, %{status: _status, body: body}} ->
+        error_msg = extract_error_message(body)
+        {:error, error_msg}
+
+      {:error, reason} ->
+        {:error, inspect(reason)}
+    end
+  end
+
+  defp get_object_name(%{"subscription_plan_data" => %{"name" => name}}), do: name
+  defp get_object_name(%{"subscription_plan_variation_data" => %{"name" => name}}), do: name
+  defp get_object_name(%{"item_data" => %{"name" => name}}), do: name
+  defp get_object_name(_), do: "Unknown"
+
+  defp update_object_name(%{"subscription_plan_data" => _data} = object, new_name) do
+    put_in(object, ["subscription_plan_data", "name"], new_name)
+  end
+
+  defp update_object_name(%{"subscription_plan_variation_data" => _data} = object, new_name) do
+    put_in(object, ["subscription_plan_variation_data", "name"], new_name)
+  end
+
+  defp update_object_name(%{"item_data" => _data} = object, new_name) do
+    put_in(object, ["item_data", "name"], new_name)
+  end
+
+  defp update_object_name(object, _new_name), do: object
+
+  defp get_prefixed_plan_name(app, plan_name) do
+    # Check if custom prefix is configured
+    prefix =
+      Application.get_env(:square_client, :plan_name_prefix) ||
+        Application.get_env(app, :square_plan_prefix) ||
+        format_app_name(app)
+
+    # Don't double-prefix if it already starts with the prefix
+    if String.starts_with?(plan_name, prefix) do
+      plan_name
+    else
+      "#{prefix} #{plan_name}"
+    end
+  end
+
+  defp format_app_name(app) do
+    app
+    |> Atom.to_string()
+    |> String.split("_")
+    |> Enum.map(&String.capitalize/1)
+    |> Enum.join("")
   end
 end

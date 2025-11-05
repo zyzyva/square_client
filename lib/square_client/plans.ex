@@ -613,8 +613,38 @@ defmodule SquareClient.Plans do
     |> maybe_transform_variations(env)
   end
 
-  # Pattern match on free plans - no transformation needed
-  defp maybe_set_base_plan_id(%{"type" => "free"} = plan, _env), do: plan
+  # Pattern match on free plans - transform environment-specific IDs
+  defp maybe_set_base_plan_id(%{"type" => "free"} = plan, env) do
+    cond do
+      # Has both sandbox and production IDs
+      plan["sandbox_base_plan_id"] && plan["production_base_plan_id"] ->
+        base_plan_id =
+          if env == "production",
+            do: plan["production_base_plan_id"],
+            else: plan["sandbox_base_plan_id"]
+
+        plan
+        |> Map.put("base_plan_id", base_plan_id)
+        |> Map.delete("sandbox_base_plan_id")
+        |> Map.delete("production_base_plan_id")
+
+      # Has only sandbox ID
+      plan["sandbox_base_plan_id"] && env != "production" ->
+        plan
+        |> Map.put("base_plan_id", plan["sandbox_base_plan_id"])
+        |> Map.delete("sandbox_base_plan_id")
+
+      # Has only production ID
+      plan["production_base_plan_id"] && env == "production" ->
+        plan
+        |> Map.put("base_plan_id", plan["production_base_plan_id"])
+        |> Map.delete("production_base_plan_id")
+
+      # No IDs to transform
+      true ->
+        plan
+    end
+  end
 
   # Pattern match when we have sandbox/production fields (transform to base_plan_id)
   defp maybe_set_base_plan_id(
