@@ -576,16 +576,25 @@ defmodule SquareClient.Plans do
   Get the current environment for an app (sandbox or production).
 
   Returns "sandbox" or "production" based on the app's config.
+
+  Auto-detects from api_url if not explicitly configured.
+
+  ## Why not use Mix.env() or config_env()?
+
+  - `Mix.env()` is NOT available in production releases (Mix is a build tool)
+  - `config_env()` is a compile-time macro that only works in config files
+
+  Therefore, we detect from the configured `api_url` which works reliably
+  in all environments including production releases.
   """
   def environment(app) do
     # Check app-specific environment config first
     # This allows each Phoenix app to configure its environment in config/*.exs files
-    # DO NOT use Mix.env() as it's not available in releases!
     env =
       Application.get_env(app, :square_environment) ||
         Application.get_env(:square_client, :environment) ||
         System.get_env("SQUARE_ENVIRONMENT") ||
-        "sandbox"
+        detect_environment_from_api_url()
 
     case env do
       :sandbox -> "sandbox"
@@ -595,6 +604,26 @@ defmodule SquareClient.Plans do
       "prod" -> "production"
       # Default to sandbox for safety
       _ -> "sandbox"
+    end
+  end
+
+  # Auto-detect environment from configured API URL
+  # Note: Mix.env() is NOT available in releases, so we detect from api_url
+  defp detect_environment_from_api_url do
+    api_url = Application.get_env(:square_client, :api_url)
+
+    cond do
+      # Check for sandbox first (contains "sandbox" in URL)
+      is_binary(api_url) and String.contains?(api_url, "sandbox") ->
+        "sandbox"
+
+      # Production URL is connect.squareup.com without "sandbox"
+      is_binary(api_url) and String.contains?(api_url, "connect.squareup.com") ->
+        "production"
+
+      # Default to sandbox for safety
+      true ->
+        "sandbox"
     end
   end
 

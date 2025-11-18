@@ -15,13 +15,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Test helpers for webhook signature generation
 - Support for all major Square webhook event types
 - Documentation for choosing between one-time purchases and subscriptions
+- **Automatic environment detection from `config_env()` (Mix environment)**
+- **Automatic API URL selection based on environment**
 
 ### Changed
 - Enhanced README with webhook integration guide and one-time payment examples
 - Improved test coverage with `capture_log` to prevent log leaks
+- **Environment detection now auto-detects from `config_env()` - no configuration needed**
+- **API URL auto-selected: production when `MIX_ENV=prod`, sandbox otherwise**
+- **Updated documentation - users no longer need to configure `api_url` or `SQUARE_ENVIRONMENT`**
 
 ### Fixed
 - Test output now clean with proper log capture
+- **Production deployments now correctly use production plan IDs and API URL automatically**
+- **Fixed issue where sandbox plan IDs were used in production when `SQUARE_ENVIRONMENT` was not explicitly set**
 
 ## [0.1.0] - 2025-01-26
 

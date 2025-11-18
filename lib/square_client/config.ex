@@ -156,9 +156,18 @@ defmodule SquareClient.Config do
   Get the configured API URL.
 
   Returns the URL or raises with a helpful error message.
+
+  ## Note on Auto-Detection
+
+  We cannot auto-detect the API URL because:
+  - `Mix.env()` is not available in production releases (Mix is a build tool)
+  - `config_env()` is a compile-time macro that only works in config files
+
+  Therefore, you must explicitly configure `api_url` in your config files.
   """
   def api_url! do
     Application.get_env(:square_client, :api_url) ||
+      auto_detect_api_url() ||
       raise """
       Square API URL is not configured.
 
@@ -167,7 +176,17 @@ defmodule SquareClient.Config do
 
       Add to config/prod.exs:
         config :square_client, api_url: "https://connect.squareup.com/v2"
+
+      The library will automatically detect which plan IDs to use based on the URL.
       """
+  end
+
+  # Auto-detect API URL - not possible in releases
+  # Mix.env() is not available in production releases (Mix is a build tool)
+  # config_env() is a compile-time macro that only works in config files
+  # Users must explicitly configure api_url in config/prod.exs
+  defp auto_detect_api_url do
+    nil
   end
 
   @doc """

@@ -552,21 +552,59 @@ config :square_client,
 For deployments where you can't modify config files, set these environment variables:
 
 - `SQUARE_ACCESS_TOKEN` - Your Square API access token (required)
-- `SQUARE_ENVIRONMENT` - Controls which plan IDs to use:
+- `SQUARE_LOCATION_ID` - Your Square location ID (required)
+- `SQUARE_APPLICATION_ID` - Your Square application ID (optional)
+- `SQUARE_ENVIRONMENT` - Controls which plan IDs to use (optional):
   - `"production"` - Uses production plan IDs
-  - `"sandbox"` (default) - Uses sandbox plan IDs
-- `SQUARE_APPLICATION_ID` - Your Square application ID
-- `SQUARE_LOCATION_ID` - Your Square location ID
+  - `"sandbox"` - Uses sandbox plan IDs
+  - **Auto-detected from `api_url` if not set** (recommended)
 
 Example:
 ```bash
 export SQUARE_ACCESS_TOKEN="YOUR_SANDBOX_TOKEN"
-export SQUARE_ENVIRONMENT="sandbox"
-export SQUARE_APPLICATION_ID="YOUR_APP_ID"
 export SQUARE_LOCATION_ID="YOUR_LOCATION_ID"
+export SQUARE_APPLICATION_ID="YOUR_APP_ID"
+# SQUARE_ENVIRONMENT is optional - auto-detected from api_url
 ```
 
 **Note:** Application config takes precedence over environment variables.
+
+### Environment Auto-Detection
+
+The library **automatically detects** whether to use sandbox or production plan IDs based on your configured `api_url`:
+
+- `https://connect.squareupsandbox.com/v2` → Uses **sandbox** plan IDs
+- `https://connect.squareup.com/v2` → Uses **production** plan IDs
+
+**Configuration Required:**
+
+You must configure the `api_url` in your config files:
+
+```elixir
+# config/config.exs (or config/dev.exs)
+config :square_client,
+  api_url: "https://connect.squareupsandbox.com/v2"
+
+# config/prod.exs
+config :square_client,
+  api_url: "https://connect.squareup.com/v2"
+```
+
+The library will automatically use the corresponding plan IDs from your `priv/square_plans.json` based on which URL is configured.
+
+**Detection Precedence** (first match wins):
+1. `Application.get_env(app, :square_environment)` - App-specific override
+2. `Application.get_env(:square_client, :environment)` - Global override
+3. `System.get_env("SQUARE_ENVIRONMENT")` - Environment variable
+4. **Auto-detect from `api_url`** - Based on configured URL (recommended)
+5. Defaults to `"sandbox"` for safety
+
+**Why not use `Mix.env()` or `config_env()`?**
+
+- `Mix.env()` is **not available in production releases** - Mix is a build tool and isn't included in compiled releases
+- `config_env()` is a **compile-time macro** that only works inside config files, not at runtime in application code
+
+The `api_url` approach works reliably in all environments including production releases, and users already configure different URLs for dev/prod anyway.
 
 ## Usage
 
