@@ -185,10 +185,45 @@ defmodule SquareClient.Subscriptions do
 
   @doc """
   Get subscription details.
+
+  ## Options
+
+    * `include` - List of additional data to include. Supported: `["actions"]`
   """
-  def get(subscription_id) do
-    "#{api_url()}/subscriptions/#{subscription_id}"
+  def get(subscription_id, opts \\ []) do
+    url = "#{api_url()}/subscriptions/#{subscription_id}"
+
+    url =
+      case Keyword.get(opts, :include) do
+        nil -> url
+        includes when is_list(includes) -> "#{url}?include=#{Enum.join(includes, ",")}"
+        include -> "#{url}?include=#{include}"
+      end
+
+    url
     |> Req.get(
+      Keyword.merge(
+        [headers: request_headers()],
+        request_options()
+      )
+    )
+    |> handle_response()
+  end
+
+  @doc """
+  Delete a scheduled subscription action.
+
+  This can be used to cancel a pending CANCEL action, effectively reactivating
+  a subscription that was scheduled for cancellation.
+
+  ## Parameters
+
+    * `subscription_id` - Square subscription ID
+    * `action_id` - The ID of the scheduled action to delete
+  """
+  def delete_action(subscription_id, action_id) do
+    "#{api_url()}/subscriptions/#{subscription_id}/actions/#{action_id}"
+    |> Req.delete(
       Keyword.merge(
         [headers: request_headers()],
         request_options()
@@ -202,33 +237,6 @@ defmodule SquareClient.Subscriptions do
   """
   def cancel(subscription_id) do
     "#{api_url()}/subscriptions/#{subscription_id}/cancel"
-    |> Req.post(
-      Keyword.merge(
-        [json: %{}, headers: request_headers()],
-        request_options()
-      )
-    )
-    |> handle_response()
-  end
-
-  @doc """
-  Resume a subscription.
-
-  This can be used to:
-  - Resume a PAUSED subscription
-  - Resume a DEACTIVATED subscription
-  - Cancel a pending CANCEL action (reactivate a subscription scheduled for cancellation)
-
-  ## Parameters
-
-    * `subscription_id` - Square subscription ID
-
-  ## Examples
-
-      SquareClient.Subscriptions.resume("sub_123")
-  """
-  def resume(subscription_id) do
-    "#{api_url()}/subscriptions/#{subscription_id}/resume"
     |> Req.post(
       Keyword.merge(
         [json: %{}, headers: request_headers()],

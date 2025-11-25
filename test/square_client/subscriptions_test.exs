@@ -344,6 +344,170 @@ defmodule SquareClient.SubscriptionsTest do
     end
   end
 
+  describe "get/2 with options" do
+    test "includes actions in query params when requested", %{bypass: bypass} do
+      subscription_id = "SUB_WITH_ACTIONS"
+
+      expected_response = %{
+        "subscription" => %{
+          "id" => subscription_id,
+          "status" => "ACTIVE",
+          "actions" => [
+            %{
+              "id" => "ACTION_CANCEL_123",
+              "type" => "CANCEL",
+              "effective_date" => "2026-11-25"
+            }
+          ]
+        }
+      }
+
+      Bypass.expect_once(bypass, "GET", "/v2/subscriptions/#{subscription_id}", fn conn ->
+        # Verify query params include actions
+        assert conn.query_string == "include=actions"
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, JSON.encode!(expected_response))
+      end)
+
+      assert {:ok, response} = Subscriptions.get(subscription_id, include: ["actions"])
+      assert response["subscription"]["id"] == subscription_id
+      assert length(response["subscription"]["actions"]) == 1
+      assert hd(response["subscription"]["actions"])["type"] == "CANCEL"
+    end
+
+    test "handles string include option", %{bypass: bypass} do
+      subscription_id = "SUB_STRING_INCLUDE"
+
+      expected_response = %{
+        "subscription" => %{
+          "id" => subscription_id,
+          "status" => "ACTIVE"
+        }
+      }
+
+      Bypass.expect_once(bypass, "GET", "/v2/subscriptions/#{subscription_id}", fn conn ->
+        assert conn.query_string == "include=actions"
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, JSON.encode!(expected_response))
+      end)
+
+      assert {:ok, _response} = Subscriptions.get(subscription_id, include: "actions")
+    end
+
+    test "works without options (backwards compatible)", %{bypass: bypass} do
+      subscription_id = "SUB_NO_OPTIONS"
+
+      expected_response = %{
+        "subscription" => %{
+          "id" => subscription_id,
+          "status" => "ACTIVE"
+        }
+      }
+
+      Bypass.expect_once(bypass, "GET", "/v2/subscriptions/#{subscription_id}", fn conn ->
+        # No query string when no options
+        assert conn.query_string == ""
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, JSON.encode!(expected_response))
+      end)
+
+      assert {:ok, _response} = Subscriptions.get(subscription_id)
+    end
+  end
+
+  describe "delete_action/2" do
+    test "deletes scheduled action successfully", %{bypass: bypass} do
+      subscription_id = "SUB_DELETE_ACTION"
+      action_id = "ACTION_CANCEL_456"
+
+      expected_response = %{
+        "subscription" => %{
+          "id" => subscription_id,
+          "status" => "ACTIVE",
+          "actions" => []
+        }
+      }
+
+      Bypass.expect_once(
+        bypass,
+        "DELETE",
+        "/v2/subscriptions/#{subscription_id}/actions/#{action_id}",
+        fn conn ->
+          conn
+          |> Plug.Conn.put_resp_content_type("application/json")
+          |> Plug.Conn.resp(200, JSON.encode!(expected_response))
+        end
+      )
+
+      assert {:ok, response} = Subscriptions.delete_action(subscription_id, action_id)
+      assert response["subscription"]["id"] == subscription_id
+      assert response["subscription"]["actions"] == []
+    end
+
+    test "returns not_found for missing action", %{bypass: bypass} do
+      subscription_id = "SUB_MISSING_ACTION"
+      action_id = "ACTION_NOT_FOUND"
+
+      Bypass.expect_once(
+        bypass,
+        "DELETE",
+        "/v2/subscriptions/#{subscription_id}/actions/#{action_id}",
+        fn conn ->
+          conn
+          |> Plug.Conn.put_resp_content_type("application/json")
+          |> Plug.Conn.resp(
+            404,
+            JSON.encode!(%{
+              "errors" => [%{"detail" => "Action not found"}]
+            })
+          )
+        end
+      )
+
+      assert {:error, :not_found} = Subscriptions.delete_action(subscription_id, action_id)
+    end
+
+    test "handles invalid action error", %{bypass: bypass} do
+      subscription_id = "SUB_INVALID_ACTION"
+      action_id = "ACTION_INVALID"
+
+      error_response = %{
+        "errors" => [
+          %{
+            "code" => "BAD_REQUEST",
+            "detail" => "Cannot delete this action type",
+            "category" => "INVALID_REQUEST_ERROR"
+          }
+        ]
+      }
+
+      Bypass.expect_once(
+        bypass,
+        "DELETE",
+        "/v2/subscriptions/#{subscription_id}/actions/#{action_id}",
+        fn conn ->
+          conn
+          |> Plug.Conn.put_resp_content_type("application/json")
+          |> Plug.Conn.resp(400, JSON.encode!(error_response))
+        end
+      )
+
+      log =
+        capture_log(fn ->
+          assert {:error, "Cannot delete this action type"} =
+                   Subscriptions.delete_action(subscription_id, action_id)
+        end)
+
+      assert log =~ "Square API error (400)"
+    end
+  end
+
   describe "cancel/1" do
     test "cancels subscription successfully", %{bypass: bypass} do
       subscription_id = "SUB_CANCEL_123"
