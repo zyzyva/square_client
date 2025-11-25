@@ -211,6 +211,33 @@ defmodule SquareClient.Subscriptions do
     |> handle_response()
   end
 
+  @doc """
+  Resume a subscription.
+
+  This can be used to:
+  - Resume a PAUSED subscription
+  - Resume a DEACTIVATED subscription
+  - Cancel a pending CANCEL action (reactivate a subscription scheduled for cancellation)
+
+  ## Parameters
+
+    * `subscription_id` - Square subscription ID
+
+  ## Examples
+
+      SquareClient.Subscriptions.resume("sub_123")
+  """
+  def resume(subscription_id) do
+    "#{api_url()}/subscriptions/#{subscription_id}/resume"
+    |> Req.post(
+      Keyword.merge(
+        [json: %{}, headers: request_headers()],
+        request_options()
+      )
+    )
+    |> handle_response()
+  end
+
   defp ensure_card_saved(customer_id, card_id_or_nonce) do
     if String.starts_with?(card_id_or_nonce, "cnon:") do
       # It's a nonce, save it as a card
