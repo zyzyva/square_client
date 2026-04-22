@@ -514,37 +514,79 @@ Only needed when:
 
 ### Method 1: Application Configuration (Recommended)
 
-**For Shared Keys Across All Apps:**
+**Env-sourced credentials MUST live in `config/runtime.exs`, not `config/config.exs`.**
+
+`config/config.exs` is evaluated at **compile time**. If you put
+`System.get_env("SQUARE_APPLICATION_ID")` there, the value is baked
+into the BEAM when the app is compiled. If the env var wasn't set at
+that moment (fresh checkout, CI build env without the var, a shell
+that exported the var after `mix compile` ran) you get
+`application_id: nil` permanently until the next recompile. Restarting
+the server doesn't help. The browser sees `data-app-id=""` and
+Square's Web Payments SDK throws
+`InvalidApplicationIdError: The Payment 'applicationId' option is not in the correct format`.
+
+`config/runtime.exs` runs on every boot. Put secrets there.
+
+**Your `config/config.exs` (compile-time defaults only):**
 ```elixir
-# Each app uses the same Square account
-# config/config.exs in each app
+# Only values that don't depend on the deploy environment.
 config :square_client,
   api_url: "https://connect.squareupsandbox.com/v2",
-  access_token: System.get_env("SQUARE_ACCESS_TOKEN")  # Same token for all apps
+  webhook_handler: MyApp.Payments.SquareWebhookHandler
 ```
 
-**For App-Specific Keys:**
+**Your `config/runtime.exs` (read fresh on every boot):**
 ```elixir
-# contacts4us/config/config.exs
-config :square_client,
-  access_token: System.get_env("CONTACTS4US_SQUARE_TOKEN")
-
-# analytics_app/config/config.exs
-config :square_client,
-  access_token: System.get_env("ANALYTICS_SQUARE_TOKEN")
+# Skip test env — config/test.exs pins its own sandbox values.
+if config_env() != :test do
+  config :square_client,
+    application_id: System.get_env("SQUARE_APPLICATION_ID") || "sandbox-sq0idb-TEST",
+    access_token: System.get_env("SQUARE_ACCESS_TOKEN"),
+    location_id: System.get_env("SQUARE_LOCATION_ID") || "TEST"
+end
 ```
 
-For environment-specific configuration:
+**For multiple apps sharing one Square account** (each app pulls the
+same env vars, so they share credentials automatically):
+```elixir
+# runtime.exs is identical across apps; set SQUARE_* env vars at the
+# deploy level and every app that links :square_client picks them up.
+```
 
+**For apps with different Square accounts** (app-specific env vars):
+```elixir
+# contacts4us/config/runtime.exs
+config :square_client,
+  access_token: System.get_env("CONTACTS4US_SQUARE_TOKEN"),
+  application_id: System.get_env("CONTACTS4US_SQUARE_APP_ID"),
+  location_id: System.get_env("CONTACTS4US_SQUARE_LOCATION")
+```
+
+**Your `config/prod.exs` and `config/test.exs` (compile-time overrides):**
 ```elixir
 # config/prod.exs
 config :square_client,
   api_url: "https://connect.squareup.com/v2"  # Production API
 
-# config/test.exs
+# config/test.exs — pin a placeholder application_id so LiveView
+# render tests don't trip an empty-string data-app-id.
 config :square_client,
-  api_url: "http://localhost:4001/v2",  # Mock server for tests
-  disable_retries: true  # Faster test execution
+  api_url: "https://connect.squareupsandbox.com/v2",
+  application_id: "sandbox-sq0idb-test-placeholder",
+  disable_retries: true
+```
+
+**In your application code, always go through `Application.get_env`:**
+```elixir
+# Good — layered, overridable per env, visible via
+# Application.get_all_env(:square_client)
+app_id = Application.get_env(:square_client, :application_id)
+
+# Bad — reaches past the OTP application env into the OS environment.
+# Not overridable by config/test.exs, not visible to release tooling,
+# couples your view layer to infra concerns.
+app_id = System.get_env("SQUARE_APPLICATION_ID")
 ```
 
 ### Method 2: Environment Variables (Optional Fallback)
@@ -605,6 +647,81 @@ The library will automatically use the corresponding plan IDs from your `priv/sq
 - `config_env()` is a **compile-time macro** that only works inside config files, not at runtime in application code
 
 The `api_url` approach works reliably in all environments including production releases, and users already configure different URLs for dev/prod anyway.
+
+## Content Security Policy
+
+The Web Payments SDK loads JavaScript, iframes, fonts, and styles from
+a handful of Square CDN hosts. If your app sets a
+Content-Security-Policy header (Phoenix does via
+`put_secure_browser_headers/2`), you need to allow these sources or
+the payment form silently refuses to render.
+
+### Base policy (card input via Web Payments SDK)
+
+Add these sources to the corresponding directives:
+
+| Directive     | Sources to add                                                   |
+| ------------- | ---------------------------------------------------------------- |
+| `script-src`  | `https://*.squarecdn.com`                                        |
+| `frame-src`   | `https://*.squarecdn.com`                                        |
+| `style-src`   | `https://*.squarecdn.com`                                        |
+| `font-src`    | `https://*.squarecdn.com https://*.cloudfront.net`               |
+| `connect-src` | `https://*.squareup.com https://*.squareupsandbox.com`           |
+
+Most apps also need `'unsafe-inline'` on `style-src` (Square injects
+inline styles into the card iframe host) and `'unsafe-inline' 'unsafe-eval'`
+on `script-src` (Phoenix LiveView requires both).
+
+### Google Pay additions
+
+If you call `payments.googlePay()` (or use the default
+`initializeGooglePay` flow in a Phoenix hook that mounts the Square
+SDK), the SDK auto-loads `pay.js` from Google and then the browser
+fetches the payment manifest from `www.google.com/pay`. Add to your
+CSP:
+
+| Directive     | Sources to add                 |
+| ------------- | ------------------------------ |
+| `script-src`  | `https://*.google.com`         |
+| `frame-src`   | `https://*.google.com`         |
+| `connect-src` | `https://google.com https://*.google.com` |
+
+The bare `google.com` in `connect-src` is intentional — the payment
+manifest is fetched from the bare apex, not a subdomain.
+
+### Full Phoenix example
+
+```elixir
+# lib/my_app_web/router.ex
+pipeline :browser do
+  plug :put_secure_browser_headers, %{
+    "content-security-policy" =>
+      "default-src 'self'; " <>
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.squarecdn.com https://*.google.com; " <>
+      "frame-src 'self' https://*.squarecdn.com https://*.google.com; " <>
+      "style-src 'self' 'unsafe-inline' https://*.squarecdn.com; " <>
+      "img-src 'self' data: blob: https:; " <>
+      "font-src 'self' data: https://*.squarecdn.com https://*.cloudfront.net; " <>
+      "connect-src 'self' https://*.squareup.com https://*.squareupsandbox.com https://google.com https://*.google.com;"
+  }
+end
+```
+
+### What's *not* your problem
+
+The Square iframe has **its own** internal CSP. You'll occasionally
+see console errors like:
+
+```
+Loading the font 'https://cash-f.squarecdn.com/static/fonts/cashsans/...'
+violates the following Content Security Policy directive:
+"font-src https://square-fonts-production-f.squarecdn.com ..."
+```
+
+The CSP being violated there is **Square's own**, enforced inside
+their iframe. It's Square blocking one of their own CDN hosts.
+There's nothing you can do from the embedder side; the fonts fall
+back to system fonts and card collection works fine. Ignore these.
 
 ## Usage
 
@@ -1271,6 +1388,40 @@ The library automatically detects and adapts to the environment:
 - Check configuration precedence (app config > env vars > defaults)
 - Use `Application.get_env(:square_client, :api_url)` to verify
 - Ensure config files are loaded (`import_config`)
+
+### `InvalidApplicationIdError: The Payment 'applicationId' option is not in the correct format`
+
+The browser is getting `data-app-id=""` and Square's JS is rejecting
+the empty string. This almost always means your env-sourced Square
+credentials are in `config/config.exs` (compile time) instead of
+`config/runtime.exs` (boot time). The value was `nil` when the app
+was last compiled and has been baked in that way ever since —
+restarting the server doesn't fix it, only a recompile would.
+
+**Fix:** move `application_id`, `access_token`, `location_id` out of
+`config/config.exs` and into `config/runtime.exs`. See the
+[Configuration → Method 1](#method-1-application-configuration-recommended)
+section for the full pattern. Then restart. No recompile needed on
+the next credential change.
+
+**Also check:** if your LiveView assigns call `System.get_env(...)`
+directly instead of `Application.get_env(:square_client, ...)`,
+switch them. Reading env vars from view code is an antipattern —
+it means test/dev config overrides don't apply.
+
+### Console shows CSP violations from squarecdn.com / google.com / pay.google.com
+
+Your app's Content-Security-Policy is blocking the Web Payments SDK
+from loading its scripts, iframes, fonts, or Google Pay backend. See
+the [Content Security Policy](#content-security-policy) section for
+the full list of directives and hosts to add.
+
+**Not your problem:** console errors where the violated CSP mentions
+`square-fonts-production-f.squarecdn.com` or
+`d1g145x70srn7h.cloudfront.net/fonts/sqmarket/`. Those are Square's
+**own** iframe-internal CSP, enforced server-side by Square, not
+yours. You cannot change them. Fonts fall back cleanly and the form
+still works.
 
 ## Square Dashboard URLs
 
