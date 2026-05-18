@@ -9,7 +9,7 @@ defmodule SquareClient.Plans.Formatter do
   @doc """
   Get all subscription plans formatted for UI display.
 
-  Returns a list of plan maps with id, name, price, features, etc.
+  Returns a list of plan maps with id, name, price, features, tier_type, etc.
 
   ## Parameters
     * `app` - The application atom
@@ -17,29 +17,47 @@ defmodule SquareClient.Plans.Formatter do
     * `opts` - Options including:
       * `:include_inactive` - Include inactive plans (default: false)
       * `:plan_types` - Module with plan type definitions (optional)
+      * `:tier_types` - List of tier types to include, or `:all` for no filtering
+        (default: `["personal"]`). Variations whose `tier_type` field is absent
+        are treated as `"personal"`, so existing JSON configs that predate the
+        tier_type field continue to work unchanged. Pass `["team"]` to render
+        only team plans (e.g. on a team-pricing panel). Pass `:all` to include
+        every tier type.
 
   ## Examples
 
+      # Default: personal-only (back-compat with existing configs)
       SquareClient.Plans.Formatter.get_subscription_plans(:my_app)
 
+      # Team plans only — for a team-pricing panel
       SquareClient.Plans.Formatter.get_subscription_plans(:my_app, "plans.json",
-        plan_types: MyApp.PlanTypes
+        tier_types: ["team"]
+      )
+
+      # Everything regardless of tier
+      SquareClient.Plans.Formatter.get_subscription_plans(:my_app, "plans.json",
+        tier_types: :all
       )
   """
   def get_subscription_plans(app, config_path \\ "square_plans.json", opts \\ []) do
     plans = SquareClient.Plans.get_plans(app, config_path)
     plan_types = Keyword.get(opts, :plan_types)
     include_inactive = Keyword.get(opts, :include_inactive, false)
+    tier_types = Keyword.get(opts, :tier_types, ["personal"])
 
-    # Build the free plan if it exists
-    free_plan = build_free_plan(plans["free"], plan_types)
+    # Build the free plan if it exists. Free is always treated as a personal-tier
+    # plan; if the caller is asking for team-only plans, the free plan is hidden.
+    free_plan =
+      if tier_match?("personal", tier_types) do
+        build_free_plan(plans["free"], plan_types)
+      end
 
     # Build premium/paid plans with variations
     premium_plans =
       plans
       |> Enum.reject(fn {key, _} -> key == "free" end)
       |> Enum.flat_map(fn {plan_key, plan_data} ->
-        build_variation_plans(plan_key, plan_data, plan_types, include_inactive)
+        build_variation_plans(plan_key, plan_data, plan_types, include_inactive, tier_types)
       end)
 
     # Combine and filter nils
@@ -208,11 +226,19 @@ defmodule SquareClient.Plans.Formatter do
     }
   end
 
-  defp build_variation_plans(plan_key, plan_data, plan_types, include_inactive) do
+  @doc """
+  Build the list of variation plan maps from a single plan-data entry.
+
+  Public so callers (and tests) can format a single plan's variations without
+  going through the full JSON load. `tier_types` is `:all` to bypass filtering,
+  or a list like `["personal"]` / `["team"]` to restrict the output.
+  """
+  def build_variation_plans(plan_key, plan_data, plan_types, include_inactive, tier_types \\ :all) do
     variations = plan_data["variations"] || %{}
 
     variations
     |> maybe_filter_active(include_inactive)
+    |> maybe_filter_tier_types(tier_types)
     |> Enum.map(fn {var_key, variation} ->
       plan_atom = build_plan_atom(plan_key, var_key, plan_types)
 
@@ -223,6 +249,7 @@ defmodule SquareClient.Plans.Formatter do
         price_cents: variation["price_cents"] || variation["amount"],
         features: variation["features"] || plan_data["features"] || default_premium_features(),
         type: :subscription,
+        tier_type: variation["tier_type"] || "personal",
         auto_renews: variation["auto_renews"] != false,
         billing_notice:
           variation["billing_notice"] || default_billing_notice(variation["cadence"]),
@@ -239,6 +266,20 @@ defmodule SquareClient.Plans.Formatter do
   defp maybe_filter_active(items, false) do
     Enum.filter(items, fn {_key, item} -> item["active"] != false end)
   end
+
+  defp maybe_filter_tier_types(items, :all), do: items
+
+  defp maybe_filter_tier_types(items, tier_types) when is_list(tier_types) do
+    Enum.filter(items, fn {_key, item} ->
+      tier_match?(item["tier_type"], tier_types)
+    end)
+  end
+
+  # Variations with no `tier_type` field default to "personal" for back-compat.
+  defp tier_match?(:all, _tier_types), do: true
+  defp tier_match?(_tier_type, :all), do: true
+  defp tier_match?(nil, tier_types), do: "personal" in tier_types
+  defp tier_match?(tier_type, tier_types), do: tier_type in tier_types
 
   defp build_plan_atom(base, variation, plan_types) do
     # Build the compound atom like :premium_monthly
