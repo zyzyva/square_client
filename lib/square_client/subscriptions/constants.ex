@@ -28,6 +28,8 @@ defmodule SquareClient.Subscriptions.Constants do
   - `CANCELED` - Subscription was canceled
   - `PAUSED` - Subscription is temporarily paused
   - `DELINQUENT` - Payment failed, subscription at risk
+  - `DEACTIVATED` - Terminal: Square stopped the subscription (e.g. after
+    exhausted payment retries); it never resumes billing
   """
 
   # Subscription Tiers
@@ -47,6 +49,7 @@ defmodule SquareClient.Subscriptions.Constants do
   @square_status_canceled "CANCELED"
   @square_status_paused "PAUSED"
   @square_status_delinquent "DELINQUENT"
+  @square_status_deactivated "DEACTIVATED"
 
   # Getters for tiers
   def tier_free, do: @tier_free
@@ -69,6 +72,7 @@ defmodule SquareClient.Subscriptions.Constants do
   def square_status_canceled, do: @square_status_canceled
   def square_status_paused, do: @square_status_paused
   def square_status_delinquent, do: @square_status_delinquent
+  def square_status_deactivated, do: @square_status_deactivated
 
   def all_square_statuses,
     do: [
@@ -76,7 +80,8 @@ defmodule SquareClient.Subscriptions.Constants do
       @square_status_active,
       @square_status_canceled,
       @square_status_paused,
-      @square_status_delinquent
+      @square_status_delinquent,
+      @square_status_deactivated
     ]
 
   # Helper functions
@@ -112,5 +117,6 @@ defmodule SquareClient.Subscriptions.Constants do
   def square_to_internal_status(@square_status_canceled), do: @status_canceled
   def square_to_internal_status(@square_status_paused), do: @status_inactive
   def square_to_internal_status(@square_status_delinquent), do: @status_past_due
+  def square_to_internal_status(@square_status_deactivated), do: @status_inactive
   def square_to_internal_status(_), do: @status_inactive
 end

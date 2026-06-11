@@ -115,7 +115,11 @@ defmodule SquareClient.Subscriptions.Schema do
           "ACTIVE",
           "CANCELED",
           "PAUSED",
-          "DELINQUENT"
+          "DELINQUENT",
+          # Terminal Square state (exhausted payment retries). Missing from
+          # this list, a DEACTIVATED webhook sync failed changeset validation
+          # and left the local row stale (found 2026-06-11).
+          "DEACTIVATED"
         ])
         |> unique_constraint(:square_subscription_id)
         |> foreign_key_constraint(owner_field)
