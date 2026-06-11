@@ -6,6 +6,10 @@ defmodule SquareClient.WebhookPlugTest do
 
   alias SquareClient.WebhookPlug
 
+  # The plug verifies against the EXACT notification URL registered on the
+  # Square webhook subscription (Square signs notification_url <> body).
+  @notification_url "https://example.com/webhooks/square"
+
   # Mock handler for testing
   defmodule MockHandler do
     @behaviour SquareClient.WebhookHandler
@@ -31,10 +35,12 @@ defmodule SquareClient.WebhookPlugTest do
     # Store original config
     original_handler = Application.get_env(:square_client, :webhook_handler)
     original_key = Application.get_env(:square_client, :webhook_signature_key)
+    original_url = Application.get_env(:square_client, :webhook_notification_url)
 
     # Set test config
     Application.put_env(:square_client, :webhook_handler, MockHandler)
     Application.put_env(:square_client, :webhook_signature_key, "test_signature_key")
+    Application.put_env(:square_client, :webhook_notification_url, @notification_url)
 
     on_exit(fn ->
       # Restore original config
@@ -48,6 +54,12 @@ defmodule SquareClient.WebhookPlugTest do
         Application.put_env(:square_client, :webhook_signature_key, original_key)
       else
         Application.delete_env(:square_client, :webhook_signature_key)
+      end
+
+      if original_url do
+        Application.put_env(:square_client, :webhook_notification_url, original_url)
+      else
+        Application.delete_env(:square_client, :webhook_notification_url)
       end
     end)
 
@@ -177,6 +189,27 @@ defmodule SquareClient.WebhookPlugTest do
       Application.put_env(:square_client, :webhook_signature_key, "test_signature_key")
     end
 
+    test "handles missing notification URL configuration" do
+      Application.delete_env(:square_client, :webhook_notification_url)
+      System.delete_env("SQUARE_WEBHOOK_NOTIFICATION_URL")
+
+      body = ~s({"type": "payment.created", "data": {"id": "123"}})
+      signature = generate_signature(body, "test_signature_key")
+
+      capture_log(fn ->
+        conn =
+          conn(:post, "/webhook", body)
+          |> put_req_header("content-type", "application/json")
+          |> put_req_header("x-square-hmacsha256-signature", signature)
+          |> WebhookPlug.call([])
+
+        assert {:error, :notification_url_not_configured} = conn.assigns.square_event
+      end)
+
+      # Restore for other tests
+      Application.put_env(:square_client, :webhook_notification_url, @notification_url)
+    end
+
     test "handles missing handler configuration" do
       Application.delete_env(:square_client, :webhook_handler)
 
@@ -200,9 +233,11 @@ defmodule SquareClient.WebhookPlugTest do
     end
   end
 
-  # Helper function to generate valid signatures
+  # Helper function to generate valid signatures the way Square does:
+  # HMAC over notification_url <> body. Signing body-only here would
+  # mirror the pre-2026-06-11 bug instead of testing Square's format.
   defp generate_signature(payload, key) do
-    :crypto.mac(:hmac, :sha256, key, payload)
+    :crypto.mac(:hmac, :sha256, key, @notification_url <> payload)
     |> Base.encode64()
   end
 end

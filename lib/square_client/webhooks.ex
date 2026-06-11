@@ -11,16 +11,21 @@ defmodule SquareClient.Webhooks do
   require Logger
 
   @doc """
-  Verify the webhook signature from Square.
+  Verify a Square webhook signature (`x-square-hmacsha256-signature`).
 
-  Square signs webhooks using HMAC-SHA256 with your webhook signature key.
-  This function verifies that the webhook actually came from Square.
+  Square signs `notification_url <> raw_body` with HMAC-SHA256 and
+  base64-encodes the digest — the notification URL registered on the
+  webhook subscription is part of the signed message (confirmed against
+  Square's official SDK WebhooksHelper implementations).
 
   ## Parameters
 
     * `payload` - The raw webhook payload (request body as string)
     * `signature` - The signature from the `x-square-hmacsha256-signature` header
     * `signature_key` - Your webhook signature key from Square
+    * `notification_url` - The EXACT notification URL string registered on
+      the webhook subscription in the Square Developer console (scheme,
+      host, and path must all match)
 
   ## Examples
 
@@ -29,12 +34,34 @@ defmodule SquareClient.Webhooks do
         payload = conn.assigns.raw_body
         signature = get_req_header(conn, "x-square-hmacsha256-signature") |> List.first()
 
-        if SquareClient.Webhooks.verify_signature(payload, signature, webhook_key()) do
+        if SquareClient.Webhooks.verify_signature(payload, signature, webhook_key(), notification_url()) do
           # Process webhook
         else
           # Invalid signature - reject
         end
       end
+  """
+  def verify_signature(payload, signature, signature_key, notification_url)
+      when is_binary(payload) and is_binary(signature) and is_binary(signature_key) and
+             is_binary(notification_url) do
+    expected_signature =
+      :crypto.mac(:hmac, :sha256, signature_key, notification_url <> payload)
+      |> Base.encode64()
+
+    secure_compare(signature, expected_signature)
+  rescue
+    _ -> false
+  end
+
+  def verify_signature(_, _, _, _), do: false
+
+  @deprecated "Square's v2 scheme signs notification_url <> body; this body-only check cannot validate real Square deliveries. Use verify_signature/4."
+  @doc """
+  Body-only signature check. Does NOT match Square's actual v2 signing
+  scheme (which prepends the subscription's notification URL to the
+  body before HMAC) and therefore rejects every genuine Square
+  delivery. Kept only for backward compatibility with callers that
+  sign their own test traffic; use `verify_signature/4`.
   """
   def verify_signature(payload, signature, signature_key)
       when is_binary(payload) and is_binary(signature) and is_binary(signature_key) do
@@ -42,18 +69,21 @@ defmodule SquareClient.Webhooks do
       :crypto.mac(:hmac, :sha256, signature_key, payload)
       |> Base.encode64()
 
-    # Use secure comparison if Plug.Crypto is available, otherwise basic comparison
-    if Code.ensure_loaded?(Plug.Crypto) do
-      apply(Plug.Crypto, :secure_compare, [signature, expected_signature])
-    else
-      # Fallback to basic comparison (less secure but functional)
-      signature == expected_signature
-    end
+    secure_compare(signature, expected_signature)
   rescue
     _ -> false
   end
 
   def verify_signature(_, _, _), do: false
+
+  # Use secure comparison if Plug.Crypto is available, otherwise basic comparison
+  defp secure_compare(signature, expected_signature) do
+    if Code.ensure_loaded?(Plug.Crypto) do
+      apply(Plug.Crypto, :secure_compare, [signature, expected_signature])
+    else
+      signature == expected_signature
+    end
+  end
 
   @doc """
   Parse a webhook event from the payload.

@@ -94,13 +94,24 @@ defmodule SquareClient.WebhookPlug do
 
   defp verify_signature(body, signature) do
     signature_key = get_signature_key()
+    notification_url = get_notification_url()
 
     cond do
       is_nil(signature_key) ->
         Logger.error("Square webhook signature key not configured")
         {:error, :signature_key_not_configured}
 
-      SquareClient.Webhooks.verify_signature(body, signature, signature_key) ->
+      is_nil(notification_url) ->
+        Logger.error(
+          "Square webhook notification URL not configured — Square signs " <>
+            "notification_url <> body, so verification is impossible without it. " <>
+            "Set :square_client, :webhook_notification_url to the EXACT URL " <>
+            "registered on the webhook subscription."
+        )
+
+        {:error, :notification_url_not_configured}
+
+      SquareClient.Webhooks.verify_signature(body, signature, signature_key, notification_url) ->
         :ok
 
       true ->
@@ -136,6 +147,11 @@ defmodule SquareClient.WebhookPlug do
   defp get_signature_key do
     Application.get_env(:square_client, :webhook_signature_key) ||
       System.get_env("SQUARE_WEBHOOK_SIGNATURE_KEY")
+  end
+
+  defp get_notification_url do
+    Application.get_env(:square_client, :webhook_notification_url) ||
+      System.get_env("SQUARE_WEBHOOK_NOTIFICATION_URL")
   end
 
   defp get_webhook_handler do

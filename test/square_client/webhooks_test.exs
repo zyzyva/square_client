@@ -3,6 +3,65 @@ defmodule SquareClient.WebhooksTest do
 
   alias SquareClient.Webhooks
 
+  describe "verify_signature/4 (Square v2 scheme: url <> body)" do
+    # Square's x-square-hmacsha256-signature is
+    # Base64(HMAC-SHA256(key, notification_url <> raw_body)) — verified
+    # against Square's official SDK WebhooksHelper implementations.
+    # Regression for the 2026-06-11 bulkcardscanner 401s: the body-only
+    # /3 check rejects every genuine Square delivery.
+    @notification_url "https://example.com/api/v1/webhooks/square"
+
+    test "verifies a signature computed the way Square computes it" do
+      payload = ~s({"type":"payment.created","data":{"id":"123"}})
+      signature_key = "test_key"
+
+      signature =
+        :crypto.mac(:hmac, :sha256, signature_key, @notification_url <> payload)
+        |> Base.encode64()
+
+      assert Webhooks.verify_signature(payload, signature, signature_key, @notification_url) ==
+               true
+    end
+
+    test "rejects a body-only signature (the /3 scheme)" do
+      payload = ~s({"type":"payment.created","data":{"id":"123"}})
+      signature_key = "test_key"
+
+      body_only_signature =
+        :crypto.mac(:hmac, :sha256, signature_key, payload) |> Base.encode64()
+
+      assert Webhooks.verify_signature(
+               payload,
+               body_only_signature,
+               signature_key,
+               @notification_url
+             ) == false
+    end
+
+    test "rejects when the notification URL differs from the registered one" do
+      payload = ~s({"type":"payment.created","data":{"id":"123"}})
+      signature_key = "test_key"
+
+      signature =
+        :crypto.mac(:hmac, :sha256, signature_key, @notification_url <> payload)
+        |> Base.encode64()
+
+      assert Webhooks.verify_signature(
+               payload,
+               signature,
+               signature_key,
+               "https://example.com/webhooks/square"
+             ) == false
+    end
+
+    test "handles nil inputs gracefully" do
+      assert Webhooks.verify_signature(nil, "sig", "key", @notification_url) == false
+      assert Webhooks.verify_signature("payload", nil, "key", @notification_url) == false
+      assert Webhooks.verify_signature("payload", "sig", nil, @notification_url) == false
+      assert Webhooks.verify_signature("payload", "sig", "key", nil) == false
+    end
+  end
+
   describe "verify_signature/3" do
     test "verifies valid signature" do
       payload = ~s({"type":"payment.created","data":{"id":"123"}})
