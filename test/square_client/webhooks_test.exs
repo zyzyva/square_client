@@ -16,8 +16,7 @@ defmodule SquareClient.WebhooksTest do
       signature_key = "test_key"
 
       signature =
-        :crypto.mac(:hmac, :sha256, signature_key, @notification_url <> payload)
-        |> Base.encode64()
+        Base.encode64(:crypto.mac(:hmac, :sha256, signature_key, @notification_url <> payload))
 
       assert Webhooks.verify_signature(payload, signature, signature_key, @notification_url) ==
                true
@@ -28,7 +27,7 @@ defmodule SquareClient.WebhooksTest do
       signature_key = "test_key"
 
       body_only_signature =
-        :crypto.mac(:hmac, :sha256, signature_key, payload) |> Base.encode64()
+        Base.encode64(:crypto.mac(:hmac, :sha256, signature_key, payload))
 
       assert Webhooks.verify_signature(
                payload,
@@ -43,8 +42,7 @@ defmodule SquareClient.WebhooksTest do
       signature_key = "test_key"
 
       signature =
-        :crypto.mac(:hmac, :sha256, signature_key, @notification_url <> payload)
-        |> Base.encode64()
+        Base.encode64(:crypto.mac(:hmac, :sha256, signature_key, @notification_url <> payload))
 
       assert Webhooks.verify_signature(
                payload,
@@ -68,7 +66,7 @@ defmodule SquareClient.WebhooksTest do
       signature_key = "test_key"
 
       # Generate correct signature
-      signature = :crypto.mac(:hmac, :sha256, signature_key, payload) |> Base.encode64()
+      signature = Base.encode64(:crypto.mac(:hmac, :sha256, signature_key, payload))
 
       assert Webhooks.verify_signature(payload, signature, signature_key) == true
     end
@@ -87,7 +85,7 @@ defmodule SquareClient.WebhooksTest do
       signature_key = "test_key"
 
       # Generate signature for original payload
-      signature = :crypto.mac(:hmac, :sha256, signature_key, original_payload) |> Base.encode64()
+      signature = Base.encode64(:crypto.mac(:hmac, :sha256, signature_key, original_payload))
 
       # Try to verify with modified payload
       assert Webhooks.verify_signature(modified_payload, signature, signature_key) == false

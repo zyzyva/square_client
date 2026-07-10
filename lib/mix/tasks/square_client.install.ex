@@ -75,70 +75,98 @@ defmodule Mix.Tasks.SquareClient.Install do
 
   @shortdoc "Generates Square subscription management files"
 
+  @spec run([String.t()]) :: :ok
   def run(args) do
     # Parse options
     {opts, _, _} = OptionParser.parse(args, strict: [tests: :boolean])
-    generate_tests = Keyword.get(opts, :tests, true)
+    ctx = build_context()
 
+    Mix.shell().info("Installing SquareClient for #{ctx.module_prefix}...")
+
+    create_directories(ctx)
+    generate_files(ctx)
+    automate_setup(ctx)
+
+    maybe_generate_tests(Keyword.get(opts, :tests, true))
+
+    # Print remaining manual steps
+    print_manual_steps(ctx.module_prefix)
+
+    Mix.shell().info("\n✅ Square Client installation complete!")
+  end
+
+  defp build_context do
     # Get app information
     app_name = Mix.Project.config()[:app]
     module_prefix = app_name |> Atom.to_string() |> Macro.camelize()
-    owner_module = Module.concat([module_prefix, "Accounts", "User"])
-    owner_association = :user
-    owner_key = :user_id
-    repo_module = Module.concat([module_prefix, "Repo"])
 
-    Mix.shell().info("Installing SquareClient for #{module_prefix}...")
+    %{
+      app_name: app_name,
+      module_prefix: module_prefix,
+      owner_module: Module.concat([module_prefix, "Accounts", "User"]),
+      owner_association: :user,
+      owner_key: :user_id,
+      repo_module: Module.concat([module_prefix, "Repo"]),
+      payments_dir: "lib/#{Macro.underscore(module_prefix)}/payments",
+      controllers_dir: "lib/#{Macro.underscore(module_prefix)}_web/controllers"
+    }
+  end
 
+  defp create_directories(ctx) do
     # Create directories
-    payments_dir = "lib/#{Macro.underscore(module_prefix)}/payments"
-    File.mkdir_p!(payments_dir)
+    File.mkdir_p!(ctx.payments_dir)
+    File.mkdir_p!(ctx.controllers_dir)
+  end
 
-    controllers_dir = "lib/#{Macro.underscore(module_prefix)}_web/controllers"
-    File.mkdir_p!(controllers_dir)
-
+  defp generate_files(ctx) do
     # Generate files
     create_subscription_schema(
-      module_prefix,
-      owner_module,
-      owner_association,
-      repo_module,
-      payments_dir
+      ctx.module_prefix,
+      ctx.owner_module,
+      ctx.owner_association,
+      ctx.repo_module,
+      ctx.payments_dir
     )
 
-    create_webhook_handler(module_prefix, payments_dir)
-    create_webhook_controller(module_prefix, controllers_dir)
-    create_migration(module_prefix, owner_key)
-    create_user_migration(owner_key)
-    create_square_plans_json(app_name)
-    create_payments_context(module_prefix, repo_module, owner_module, payments_dir, app_name)
-    create_subscription_liveviews(module_prefix, app_name)
+    create_webhook_handler(ctx.module_prefix, ctx.payments_dir)
+    create_webhook_controller(ctx.module_prefix, ctx.controllers_dir)
+    create_migration(ctx.module_prefix, ctx.owner_key)
+    create_user_migration(ctx.owner_key)
+    create_square_plans_json(ctx.app_name)
+
+    create_payments_context(
+      ctx.module_prefix,
+      ctx.repo_module,
+      ctx.owner_module,
+      ctx.payments_dir,
+      ctx.app_name
+    )
+
+    create_subscription_liveviews(ctx.module_prefix, ctx.app_name)
     create_square_payment_hook()
-    update_config(module_prefix)
+    update_config(ctx.module_prefix)
 
     # Generate auth helpers using the separate task
     Mix.shell().info("\n📔 Generating subscription auth helpers...")
     Mix.Task.run("square_client.gen.auth", [])
+  end
 
+  defp automate_setup(ctx) do
     # Automate setup
-    update_application(module_prefix)
-    update_router(module_prefix)
+    update_application(ctx.module_prefix)
+    update_router(ctx.module_prefix)
     update_app_js()
-    update_user_schema(module_prefix, owner_module)
+    update_user_schema(ctx.module_prefix, ctx.owner_module)
     run_migration()
+  end
 
-    # Generate tests if requested
-    if generate_tests do
-      Mix.shell().info("\n📝 Generating comprehensive test files...")
-      Mix.Task.run("square_client.gen.tests", [])
-    else
-      Mix.shell().info("\n⏭️  Skipping test generation (use --tests to generate)")
-    end
+  defp maybe_generate_tests(true = _generate_tests) do
+    Mix.shell().info("\n📝 Generating comprehensive test files...")
+    Mix.Task.run("square_client.gen.tests", [])
+  end
 
-    # Print remaining manual steps
-    print_manual_steps(module_prefix)
-
-    Mix.shell().info("\n✅ Square Client installation complete!")
+  defp maybe_generate_tests(false = _generate_tests) do
+    Mix.shell().info("\n⏭️  Skipping test generation (use --tests to generate)")
   end
 
   defp create_subscription_schema(
@@ -150,7 +178,7 @@ defmodule Mix.Tasks.SquareClient.Install do
        ) do
     path = Path.join(dir, "subscription.ex")
 
-    content = """
+    File.write!(path, """
     defmodule #{module_prefix}.Payments.Subscription do
       @moduledoc \"\"\"
       Schema for tracking Square subscriptions.
@@ -172,9 +200,8 @@ defmodule Mix.Tasks.SquareClient.Install do
         for_owner(query, user_or_id)
       end
     end
-    """
+    """)
 
-    File.write!(path, content)
     Mix.shell().info("  * Created #{path}")
   end
 
@@ -290,7 +317,7 @@ defmodule Mix.Tasks.SquareClient.Install do
     path = Path.join(migrations_dir, "#{timestamp}_create_subscriptions.exs")
     owner_table = owner_key |> Atom.to_string() |> String.replace_suffix("_id", "s")
 
-    content = """
+    File.write!(path, """
     defmodule #{module_prefix}.Repo.Migrations.CreateSubscriptions do
       use Ecto.Migration
 
@@ -315,9 +342,8 @@ defmodule Mix.Tasks.SquareClient.Install do
         create index(:subscriptions, [:status])
       end
     end
-    """
+    """)
 
-    File.write!(path, content)
     Mix.shell().info("  * Created #{path}")
   end
 
@@ -339,7 +365,7 @@ defmodule Mix.Tasks.SquareClient.Install do
     path = "priv/repo/migrations/#{timestamp}_#{migration_name}.exs"
     module_name = Macro.camelize(migration_name)
 
-    content = """
+    File.write!(path, """
     defmodule #{Mix.Project.config()[:app] |> Atom.to_string() |> Macro.camelize()}.Repo.Migrations.#{module_name} do
       use Ecto.Migration
 
@@ -351,13 +377,17 @@ defmodule Mix.Tasks.SquareClient.Install do
         create unique_index(:#{table_name}, [:square_customer_id])
       end
     end
-    """
+    """)
 
-    File.write!(path, content)
     Mix.shell().info("  * Created #{path}")
   end
 
   defp update_config(module_prefix) do
+    update_dev_config(module_prefix)
+    update_prod_config()
+  end
+
+  defp update_dev_config(module_prefix) do
     webhook_handler = "#{module_prefix}.Payments.SquareWebhookHandler"
 
     # Update config.exs
@@ -383,7 +413,9 @@ defmodule Mix.Tasks.SquareClient.Install do
         Mix.shell().info("  * Updated #{config_path}")
       end
     end
+  end
 
+  defp update_prod_config do
     # Update prod.exs
     prod_path = "config/prod.exs"
 
@@ -582,83 +614,97 @@ defmodule Mix.Tasks.SquareClient.Install do
     router_path = "lib/#{Macro.underscore(module_prefix)}_web/router.ex"
 
     if File.exists?(router_path) do
-      content = File.read!(router_path)
-      updates = []
-
-      # Add webhook pipeline if not present
-      {content, updates} =
-        if String.contains?(content, "pipeline :square_webhook") do
-          {content, updates}
-        else
-          webhook_pipeline = """
-
-            pipeline :square_webhook do
-              plug :accepts, ["json"]
-              plug SquareClient.WebhookPlug
-            end
-          """
-
-          updated_content =
-            String.replace(
-              content,
-              ~r/(pipeline :api do.*?end)/s,
-              "\\1#{webhook_pipeline}"
-            )
-
-          {updated_content, ["webhook pipeline" | updates]}
-        end
-
-      # Add webhook route if not present
-      {content, updates} =
-        if String.contains?(content, "SquareWebhookController") do
-          {content, updates}
-        else
-          webhook_route = """
-
-            scope "/webhooks", #{module_prefix}Web do
-              pipe_through :square_webhook
-              post "/square", SquareWebhookController, :handle
-            end
-          """
-
-          # Add webhook route before the final 'end' of the router module
-          updated_content =
-            String.replace(
-              content,
-              ~r/\nend\s*$/,
-              "\n#{webhook_route}end\n"
-            )
-
-          {updated_content, ["webhook route" | updates]}
-        end
-
-      # Add LiveView routes if not present
-      {content, updates} =
-        if String.contains?(content, "SubscriptionLive.Index") do
-          {content, updates}
-        else
-          liveview_routes = """
-
-              live "/subscription", SubscriptionLive.Index, :index
-              live "/subscription/manage", SubscriptionLive.Manage, :manage
-          """
-
-          # Try to find existing authenticated live_session
-          updated_content =
-            String.replace(
-              content,
-              ~r/(live_session :require_authenticated_user.*?do)/s,
-              "\\1#{liveview_routes}"
-            )
-
-          {updated_content, ["subscription routes" | updates]}
-        end
-
-      if updates != [] do
-        File.write!(router_path, content)
-        Mix.shell().info("  * Updated #{router_path} with #{Enum.join(updates, ", ")}")
-      end
+      apply_router_updates(router_path, module_prefix)
     end
+  end
+
+  defp apply_router_updates(router_path, module_prefix) do
+    content = File.read!(router_path)
+
+    {content, updates} = add_webhook_pipeline(content, [])
+    {content, updates} = add_webhook_route(content, updates, module_prefix)
+    {content, updates} = add_liveview_routes(content, updates)
+
+    write_router_updates(router_path, content, updates)
+  end
+
+  # Add webhook pipeline if not present
+  defp add_webhook_pipeline(content, updates) do
+    if String.contains?(content, "pipeline :square_webhook") do
+      {content, updates}
+    else
+      webhook_pipeline = """
+
+        pipeline :square_webhook do
+          plug :accepts, ["json"]
+          plug SquareClient.WebhookPlug
+        end
+      """
+
+      updated_content =
+        String.replace(
+          content,
+          ~r/(pipeline :api do.*?end)/s,
+          "\\1#{webhook_pipeline}"
+        )
+
+      {updated_content, ["webhook pipeline" | updates]}
+    end
+  end
+
+  # Add webhook route if not present
+  defp add_webhook_route(content, updates, module_prefix) do
+    if String.contains?(content, "SquareWebhookController") do
+      {content, updates}
+    else
+      webhook_route = """
+
+        scope "/webhooks", #{module_prefix}Web do
+          pipe_through :square_webhook
+          post "/square", SquareWebhookController, :handle
+        end
+      """
+
+      # Add webhook route before the final 'end' of the router module
+      updated_content =
+        String.replace(
+          content,
+          ~r/\nend\s*$/,
+          "\n#{webhook_route}end\n"
+        )
+
+      {updated_content, ["webhook route" | updates]}
+    end
+  end
+
+  # Add LiveView routes if not present
+  defp add_liveview_routes(content, updates) do
+    if String.contains?(content, "SubscriptionLive.Index") do
+      {content, updates}
+    else
+      liveview_routes = """
+
+          live "/subscription", SubscriptionLive.Index, :index
+          live "/subscription/manage", SubscriptionLive.Manage, :manage
+      """
+
+      # Try to find existing authenticated live_session
+      updated_content =
+        String.replace(
+          content,
+          ~r/(live_session :require_authenticated_user.*?do)/s,
+          "\\1#{liveview_routes}"
+        )
+
+      {updated_content, ["subscription routes" | updates]}
+    end
+  end
+
+  defp write_router_updates(_router_path, _content, []), do: :ok
+
+  defp write_router_updates(router_path, content, updates) do
+    File.write!(router_path, content)
+    Mix.shell().info("  * Updated #{router_path} with #{Enum.join(updates, ", ")}")
   end
 
   defp update_app_js do
@@ -689,7 +735,9 @@ defmodule Mix.Tasks.SquareClient.Install do
   defp update_user_schema(module_prefix, _owner_module) do
     user_path = "lib/#{Macro.underscore(module_prefix)}/accounts/user.ex"
 
-    unless File.exists?(user_path) do
+    if File.exists?(user_path) do
+      do_update_user_schema(user_path, module_prefix)
+    else
       Mix.shell().error("  ⚠️  Could not find User schema at #{user_path}")
 
       Mix.shell().error(
@@ -697,120 +745,139 @@ defmodule Mix.Tasks.SquareClient.Install do
       )
 
       :ok
-    else
-      do_update_user_schema(user_path, module_prefix)
     end
   end
 
   defp do_update_user_schema(user_path, module_prefix) do
+    add_square_customer_id_field(user_path)
+    add_subscriptions_association(user_path, module_prefix)
+
+    :ok
+  end
+
+  defp add_square_customer_id_field(user_path) do
     content = File.read!(user_path)
 
     # Check if already has square_customer_id
     if content =~ ~r/field\s+:square_customer_id/ do
       Mix.shell().info("  * User schema already has square_customer_id field")
     else
-      # Find the schema block and add the field before belongs_to or timestamps
-      content =
-        cond do
-          # Try to add before belongs_to
-          content =~ ~r/\n(\s+)belongs_to / ->
-            String.replace(
-              content,
-              ~r/\n(\s+)belongs_to /,
-              "\n    field :square_customer_id, :string\n\n\\1belongs_to ",
-              global: false
-            )
-
-          # Try to add before has_many
-          content =~ ~r/\n(\s+)has_many / ->
-            String.replace(
-              content,
-              ~r/\n(\s+)has_many /,
-              "\n    field :square_customer_id, :string\n\n\\1has_many ",
-              global: false
-            )
-
-          # Try to add before timestamps
-          content =~ ~r/\n(\s+)timestamps\(/ ->
-            String.replace(
-              content,
-              ~r/\n(\s+)timestamps\(/,
-              "\n    field :square_customer_id, :string\n\n\\1timestamps(",
-              global: false
-            )
-
-          # Default: couldn't find insertion point
-          true ->
-            Mix.shell().error(
-              "  ⚠️  Could not automatically add square_customer_id to User schema"
-            )
-
-            Mix.shell().error("     Please add manually: field :square_customer_id, :string")
-            content
-        end
-
-      if content != File.read!(user_path) do
-        File.write!(user_path, content)
-        Mix.shell().info("  * Updated #{user_path} with square_customer_id field")
-      end
+      insert_square_customer_id_field(user_path, content)
     end
+  end
+
+  defp insert_square_customer_id_field(user_path, content) do
+    # Find the schema block and add the field before belongs_to or timestamps
+    updated = customer_id_field_content(content)
+
+    if updated != File.read!(user_path) do
+      File.write!(user_path, updated)
+      Mix.shell().info("  * Updated #{user_path} with square_customer_id field")
+    end
+  end
+
+  defp customer_id_field_content(content) do
+    cond do
+      # Try to add before belongs_to
+      content =~ ~r/\n(\s+)belongs_to / ->
+        String.replace(
+          content,
+          ~r/\n(\s+)belongs_to /,
+          "\n    field :square_customer_id, :string\n\n\\1belongs_to ",
+          global: false
+        )
+
+      # Try to add before has_many
+      content =~ ~r/\n(\s+)has_many / ->
+        String.replace(
+          content,
+          ~r/\n(\s+)has_many /,
+          "\n    field :square_customer_id, :string\n\n\\1has_many ",
+          global: false
+        )
+
+      # Try to add before timestamps
+      content =~ ~r/\n(\s+)timestamps\(/ ->
+        String.replace(
+          content,
+          ~r/\n(\s+)timestamps\(/,
+          "\n    field :square_customer_id, :string\n\n\\1timestamps(",
+          global: false
+        )
+
+      # Default: couldn't find insertion point
+      true ->
+        Mix.shell().error("  ⚠️  Could not automatically add square_customer_id to User schema")
+
+        Mix.shell().error("     Please add manually: field :square_customer_id, :string")
+        content
+    end
+  end
+
+  defp add_subscriptions_association(user_path, module_prefix) do
+    content = File.read!(user_path)
 
     # Check if already has subscriptions association
     if content =~ ~r/has_many\s+:subscriptions/ do
       Mix.shell().info("  * User schema already has subscriptions association")
     else
-      # Add has_many :subscriptions after the square_customer_id or other associations
-      content = File.read!(user_path)
-
-      content =
-        cond do
-          # Try to add after other has_many
-          content =~ ~r/\n(\s+)has_many .+\n/ ->
-            String.replace(
-              content,
-              ~r/(\n\s+has_many .+\n)/,
-              "\\1    has_many :subscriptions, #{module_prefix}.Payments.Subscription\n",
-              global: false
-            )
-
-          # Try to add after belongs_to
-          content =~ ~r/\n(\s+)belongs_to .+\n/ ->
-            String.replace(
-              content,
-              ~r/(\n\s+belongs_to .+\n)/,
-              "\\1    has_many :subscriptions, #{module_prefix}.Payments.Subscription\n",
-              global: false
-            )
-
-          # Try to add before timestamps
-          content =~ ~r/\n(\s+)timestamps\(/ ->
-            String.replace(
-              content,
-              ~r/\n(\s+)timestamps\(/,
-              "\n    has_many :subscriptions, #{module_prefix}.Payments.Subscription\n\n\\1timestamps(",
-              global: false
-            )
-
-          # Default: couldn't find insertion point
-          true ->
-            Mix.shell().error(
-              "  ⚠️  Could not automatically add subscriptions association to User schema"
-            )
-
-            Mix.shell().error(
-              "     Please add manually: has_many :subscriptions, #{module_prefix}.Payments.Subscription"
-            )
-
-            content
-        end
-
-      if content != File.read!(user_path) do
-        File.write!(user_path, content)
-        Mix.shell().info("  * Updated #{user_path} with subscriptions association")
-      end
+      insert_subscriptions_association(user_path, module_prefix)
     end
+  end
 
-    :ok
+  defp insert_subscriptions_association(user_path, module_prefix) do
+    # Add has_many :subscriptions after the square_customer_id or other associations
+    content = File.read!(user_path)
+    updated = subscriptions_association_content(content, module_prefix)
+
+    if updated != File.read!(user_path) do
+      File.write!(user_path, updated)
+      Mix.shell().info("  * Updated #{user_path} with subscriptions association")
+    end
+  end
+
+  defp subscriptions_association_content(content, module_prefix) do
+    cond do
+      # Try to add after other has_many
+      content =~ ~r/\n(\s+)has_many .+\n/ ->
+        String.replace(
+          content,
+          ~r/(\n\s+has_many .+\n)/,
+          "\\1    has_many :subscriptions, #{module_prefix}.Payments.Subscription\n",
+          global: false
+        )
+
+      # Try to add after belongs_to
+      content =~ ~r/\n(\s+)belongs_to .+\n/ ->
+        String.replace(
+          content,
+          ~r/(\n\s+belongs_to .+\n)/,
+          "\\1    has_many :subscriptions, #{module_prefix}.Payments.Subscription\n",
+          global: false
+        )
+
+      # Try to add before timestamps
+      content =~ ~r/\n(\s+)timestamps\(/ ->
+        String.replace(
+          content,
+          ~r/\n(\s+)timestamps\(/,
+          "\n    has_many :subscriptions, #{module_prefix}.Payments.Subscription\n\n\\1timestamps(",
+          global: false
+        )
+
+      # Default: couldn't find insertion point
+      true ->
+        Mix.shell().error(
+          "  ⚠️  Could not automatically add subscriptions association to User schema"
+        )
+
+        Mix.shell().error(
+          "     Please add manually: has_many :subscriptions, " <>
+            "#{module_prefix}.Payments.Subscription"
+        )
+
+        content
+    end
   end
 
   defp run_migration do

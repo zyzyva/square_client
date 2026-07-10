@@ -41,12 +41,12 @@ defmodule SquareClient.Webhooks do
         end
       end
   """
+  @spec verify_signature(term(), term(), term(), term()) :: boolean()
   def verify_signature(payload, signature, signature_key, notification_url)
       when is_binary(payload) and is_binary(signature) and is_binary(signature_key) and
              is_binary(notification_url) do
-    expected_signature =
-      :crypto.mac(:hmac, :sha256, signature_key, notification_url <> payload)
-      |> Base.encode64()
+    mac = :crypto.mac(:hmac, :sha256, signature_key, notification_url <> payload)
+    expected_signature = Base.encode64(mac)
 
     secure_compare(signature, expected_signature)
   rescue
@@ -63,11 +63,11 @@ defmodule SquareClient.Webhooks do
   delivery. Kept only for backward compatibility with callers that
   sign their own test traffic; use `verify_signature/4`.
   """
+  @spec verify_signature(term(), term(), term()) :: boolean()
   def verify_signature(payload, signature, signature_key)
       when is_binary(payload) and is_binary(signature) and is_binary(signature_key) do
-    expected_signature =
-      :crypto.mac(:hmac, :sha256, signature_key, payload)
-      |> Base.encode64()
+    mac = :crypto.mac(:hmac, :sha256, signature_key, payload)
+    expected_signature = Base.encode64(mac)
 
     secure_compare(signature, expected_signature)
   rescue
@@ -103,6 +103,7 @@ defmodule SquareClient.Webhooks do
           # Handle parse error
       end
   """
+  @spec parse_event(binary() | map()) :: {:ok, map()} | {:error, term()}
   def parse_event(payload) when is_binary(payload) do
     case JSON.decode(payload) do
       {:ok, %{"type" => event_type, "data" => data} = event} ->
@@ -127,24 +128,27 @@ defmodule SquareClient.Webhooks do
     # Already decoded
     event_type = event["type"] || event[:type]
     data = event["data"] || event[:data]
+    build_decoded_event(event, event_type, data)
+  end
 
-    if event_type && data do
-      {:ok,
-       %{
-         event_type: normalize_event_type(event_type),
-         data: data,
-         event_id: event["event_id"] || event[:event_id],
-         created_at: event["created_at"] || event[:created_at],
-         merchant_id: event["merchant_id"] || event[:merchant_id]
-       }}
-    else
-      {:error, :invalid_event_format}
-    end
+  defp build_decoded_event(_event, nil, _data), do: {:error, :invalid_event_format}
+  defp build_decoded_event(_event, _event_type, nil), do: {:error, :invalid_event_format}
+
+  defp build_decoded_event(event, event_type, data) do
+    {:ok,
+     %{
+       event_type: normalize_event_type(event_type),
+       data: data,
+       event_id: event["event_id"] || event[:event_id],
+       created_at: event["created_at"] || event[:created_at],
+       merchant_id: event["merchant_id"] || event[:merchant_id]
+     }}
   end
 
   @doc """
   Check if an event is a subscription event.
   """
+  @spec subscription_event?(term()) :: boolean()
   def subscription_event?(event_type) do
     String.starts_with?(to_string(event_type), "subscription.")
   end
@@ -152,6 +156,7 @@ defmodule SquareClient.Webhooks do
   @doc """
   Check if an event is a payment event.
   """
+  @spec payment_event?(term()) :: boolean()
   def payment_event?(event_type) do
     String.starts_with?(to_string(event_type), "payment.")
   end
@@ -159,6 +164,7 @@ defmodule SquareClient.Webhooks do
   @doc """
   Check if an event is a customer event.
   """
+  @spec customer_event?(term()) :: boolean()
   def customer_event?(event_type) do
     String.starts_with?(to_string(event_type), "customer.")
   end
@@ -166,6 +172,7 @@ defmodule SquareClient.Webhooks do
   @doc """
   Check if an event is an invoice event.
   """
+  @spec invoice_event?(term()) :: boolean()
   def invoice_event?(event_type) do
     String.starts_with?(to_string(event_type), "invoice.")
   end
@@ -173,6 +180,7 @@ defmodule SquareClient.Webhooks do
   @doc """
   Extract subscription ID from various event types.
   """
+  @spec get_subscription_id(map()) :: {:ok, String.t()} | {:error, :subscription_id_not_found}
   def get_subscription_id(%{data: %{"object" => %{"subscription" => %{"id" => id}}}}),
     do: {:ok, id}
 
@@ -196,6 +204,7 @@ defmodule SquareClient.Webhooks do
   @doc """
   Extract customer ID from various event types.
   """
+  @spec get_customer_id(map()) :: {:ok, String.t()} | {:error, :customer_id_not_found}
   def get_customer_id(%{data: %{"object" => %{"customer" => %{"id" => id}}}}), do: {:ok, id}
 
   def get_customer_id(%{data: %{"object" => %{"customer_id" => id}}}) when not is_nil(id),
@@ -214,6 +223,7 @@ defmodule SquareClient.Webhooks do
   @doc """
   Extract payment ID from payment events.
   """
+  @spec get_payment_id(map()) :: {:ok, String.t()} | {:error, :payment_id_not_found}
   def get_payment_id(%{data: %{"object" => %{"payment" => %{"id" => id}}}}), do: {:ok, id}
 
   def get_payment_id(%{data: %{"id" => id}, event_type: event_type}) do
@@ -233,5 +243,5 @@ defmodule SquareClient.Webhooks do
     |> String.replace(~r/[^a-z0-9]/, ".")
   end
 
-  defp normalize_event_type(event_type), do: to_string(event_type) |> normalize_event_type()
+  defp normalize_event_type(event_type), do: normalize_event_type(to_string(event_type))
 end

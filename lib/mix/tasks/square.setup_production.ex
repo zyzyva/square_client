@@ -49,151 +49,214 @@ defmodule Mix.Tasks.Square.SetupProduction do
     dry_run: :boolean
   ]
 
+  @spec run([String.t()]) :: :ok
   def run(args) do
-    {opts, _, _} = OptionParser.parse(args, switches: @switches)
-
-    app = get_app(opts[:app])
-    config_path = opts[:config] || "square_plans.json"
-    dry_run = opts[:dry_run] || false
-
-    # Check for production token
+    opts = parse_options(args)
     prod_token = System.get_env("SQUARE_PRODUCTION_ACCESS_TOKEN")
 
-    if !prod_token && !dry_run do
-      IO.puts("❌ SQUARE_PRODUCTION_ACCESS_TOKEN environment variable not set")
-      IO.puts("\nFor safety, production credentials must be provided via environment variable:")
-      IO.puts("  export SQUARE_PRODUCTION_ACCESS_TOKEN=\"your_production_token\"")
-      exit(:normal)
-    end
+    ensure_production_token!(prod_token, opts.dry_run)
 
     Mix.Task.run("app.start")
 
-    IO.puts("🚨 PRODUCTION SETUP 🚨")
-    IO.puts("====================")
+    print_production_header()
+    confirm_production(opts.dry_run)
 
-    if dry_run do
-      IO.puts("🔍 DRY RUN MODE - No changes will be made")
-    else
-      IO.puts("⚠️  This will create REAL plans in your PRODUCTION Square account!")
-      IO.puts("\nPress Enter to continue or Ctrl+C to abort...")
-      IO.gets("")
-    end
-
-    # Store original config
-    original_api_url = Application.get_env(:square_client, :api_url)
-    original_token = Application.get_env(:square_client, :access_token)
+    original_config = capture_original_config()
 
     try do
-      if !dry_run do
-        # Switch to production API
-        Application.put_env(:square_client, :api_url, "https://connect.squareup.com/v2")
-        Application.put_env(:square_client, :access_token, prod_token)
-
-        IO.puts("✓ Switched to production Square API")
-      end
-
-      # Load raw plans from JSON config (don't transform for environment)
-      plan_configs = load_raw_plans(app, config_path)
-
-      # Check what needs to be created
-      production_plans = filter_production_unconfigured(plan_configs)
-
-      if Enum.empty?(production_plans) do
-        IO.puts("\n✅ All plans already have production IDs configured!")
-        IO.puts("\nCurrent production configuration:")
-        show_production_config(plan_configs)
-
-        if !dry_run do
-          IO.puts("\n🔄 Syncing active status with Square...")
-          sync_production_status(app, plan_configs, config_path)
-        else
-          IO.puts("\n🔄 Would sync active status with Square (dry-run mode)")
-        end
-      else
-        IO.puts("\n📋 Plans needing production setup:")
-
-        Enum.each(production_plans, fn {plan_key, plan_config} ->
-          if !plan_config["production_base_plan_id"] do
-            IO.puts("  - #{plan_config["name"]} (#{plan_key}) - NEW BASE PLAN NEEDED")
-          else
-            IO.puts(
-              "  - #{plan_config["name"]} (#{plan_key}) - Adding variations to existing plan"
-            )
-          end
-
-          if plan_config["variations"] do
-            Enum.each(plan_config["variations"], fn {_var_key, var_config} ->
-              cond do
-                !var_config["production_variation_id"] && var_config["active"] != false ->
-                  IO.puts("    • #{var_config["name"]} variation - TO BE CREATED")
-
-                var_config["active"] == false ->
-                  IO.puts("    • #{var_config["name"]} variation - SKIPPED (inactive)")
-
-                true ->
-                  nil
-              end
-            end)
-          end
-        end)
-
-        if !dry_run do
-          IO.puts("\n🚀 Creating production plans...")
-
-          # Process each plan that needs production setup
-          Enum.each(production_plans, fn {plan_key, plan_config} ->
-            IO.puts("\n📦 Processing: #{plan_config["name"]}")
-
-            # Use existing base plan or create new one if needed
-            production_base_id =
-              if plan_config["production_base_plan_id"] do
-                IO.puts(
-                  "  ✓ Using existing production base plan: #{plan_config["production_base_plan_id"]}"
-                )
-
-                plan_config["production_base_plan_id"]
-              else
-                create_production_base_plan(app, plan_key, plan_config, config_path)
-              end
-
-            # Create variations if base plan exists
-            if production_base_id && plan_config["variations"] do
-              create_production_variations(
-                app,
-                plan_key,
-                plan_config,
-                production_base_id,
-                config_path
-              )
-            end
-          end)
-
-          IO.puts("\n✅ Production setup complete!")
-          IO.puts("\n📝 Updated square_plans.json with production IDs")
-
-          # Also sync status for all plans including newly created ones
-          IO.puts("\n🔄 Syncing all plan status with Square...")
-          # Reload config to get newly saved IDs
-          updated_plan_configs = load_raw_plans(app, config_path)
-          sync_production_status(app, updated_plan_configs, config_path)
-        else
-          IO.puts("\n📋 Dry run complete. Run without --dry-run to create these plans.")
-        end
-      end
+      maybe_switch_to_production(opts.dry_run, prod_token)
+      process_production_plans(opts)
     after
-      # Always restore original config
-      if original_api_url, do: Application.put_env(:square_client, :api_url, original_api_url)
-      if original_token, do: Application.put_env(:square_client, :access_token, original_token)
-
-      if !dry_run do
-        IO.puts("\n✓ Restored original Square API configuration")
-      end
+      restore_original_config(original_config, opts.dry_run)
     end
 
+    print_next_steps()
+  end
+
+  defp parse_options(args) do
+    {opts, _, _} = OptionParser.parse(args, switches: @switches)
+
+    %{
+      app: get_app(opts[:app]),
+      config_path: opts[:config] || "square_plans.json",
+      dry_run: opts[:dry_run] || false
+    }
+  end
+
+  defp ensure_production_token!(nil, false = _dry_run) do
+    IO.puts("❌ SQUARE_PRODUCTION_ACCESS_TOKEN environment variable not set")
+    IO.puts("\nFor safety, production credentials must be provided via environment variable:")
+    IO.puts("  export SQUARE_PRODUCTION_ACCESS_TOKEN=\"your_production_token\"")
+    exit(:normal)
+  end
+
+  defp ensure_production_token!(_prod_token, _dry_run), do: :ok
+
+  defp print_production_header do
+    IO.puts("🚨 PRODUCTION SETUP 🚨")
+    IO.puts("====================")
+  end
+
+  defp confirm_production(true = _dry_run) do
+    IO.puts("🔍 DRY RUN MODE - No changes will be made")
+  end
+
+  defp confirm_production(false = _dry_run) do
+    IO.puts("⚠️  This will create REAL plans in your PRODUCTION Square account!")
+    IO.puts("\nPress Enter to continue or Ctrl+C to abort...")
+    IO.gets("")
+  end
+
+  defp capture_original_config do
+    %{
+      api_url: Application.get_env(:square_client, :api_url),
+      access_token: Application.get_env(:square_client, :access_token)
+    }
+  end
+
+  defp maybe_switch_to_production(true = _dry_run, _prod_token), do: :ok
+
+  defp maybe_switch_to_production(false = _dry_run, prod_token) do
+    Application.put_env(:square_client, :api_url, "https://connect.squareup.com/v2")
+    Application.put_env(:square_client, :access_token, prod_token)
+
+    IO.puts("✓ Switched to production Square API")
+  end
+
+  defp restore_original_config(original_config, dry_run) do
+    if original_config.api_url,
+      do: Application.put_env(:square_client, :api_url, original_config.api_url)
+
+    if original_config.access_token,
+      do: Application.put_env(:square_client, :access_token, original_config.access_token)
+
+    maybe_print_restore(dry_run)
+  end
+
+  defp maybe_print_restore(true = _dry_run), do: :ok
+
+  defp maybe_print_restore(false = _dry_run) do
+    IO.puts("\n✓ Restored original Square API configuration")
+  end
+
+  defp print_next_steps do
     IO.puts("\nNext steps:")
     IO.puts("1. Review the updated square_plans.json")
     IO.puts("2. Commit the configuration changes")
     IO.puts("3. Deploy to production with the updated configuration")
+  end
+
+  defp process_production_plans(opts) do
+    plan_configs = load_raw_plans(opts.app, opts.config_path)
+    production_plans = filter_production_unconfigured(plan_configs)
+
+    handle_production_plans(production_plans, plan_configs, opts)
+  end
+
+  defp handle_production_plans(production_plans, plan_configs, opts)
+       when map_size(production_plans) == 0 do
+    IO.puts("\n✅ All plans already have production IDs configured!")
+    IO.puts("\nCurrent production configuration:")
+    show_production_config(plan_configs)
+
+    sync_all_configured_status(opts.dry_run, opts, plan_configs)
+  end
+
+  defp handle_production_plans(production_plans, _plan_configs, opts) do
+    print_plans_needing_setup(production_plans)
+    create_or_report_dry_run(opts.dry_run, production_plans, opts)
+  end
+
+  defp sync_all_configured_status(false = _dry_run, opts, plan_configs) do
+    IO.puts("\n🔄 Syncing active status with Square...")
+    sync_production_status(opts.app, plan_configs, opts.config_path)
+  end
+
+  defp sync_all_configured_status(true = _dry_run, _opts, _plan_configs) do
+    IO.puts("\n🔄 Would sync active status with Square (dry-run mode)")
+  end
+
+  defp print_plans_needing_setup(production_plans) do
+    IO.puts("\n📋 Plans needing production setup:")
+
+    Enum.each(production_plans, fn {plan_key, plan_config} ->
+      print_plan_setup_line(plan_key, plan_config)
+      print_variation_setup_lines(plan_config["variations"])
+    end)
+  end
+
+  defp print_plan_setup_line(plan_key, plan_config) do
+    if plan_config["production_base_plan_id"] do
+      IO.puts("  - #{plan_config["name"]} (#{plan_key}) - Adding variations to existing plan")
+    else
+      IO.puts("  - #{plan_config["name"]} (#{plan_key}) - NEW BASE PLAN NEEDED")
+    end
+  end
+
+  defp print_variation_setup_lines(nil), do: :ok
+
+  defp print_variation_setup_lines(variations) do
+    Enum.each(variations, fn {_var_key, var_config} ->
+      print_variation_setup_line(var_config)
+    end)
+  end
+
+  defp print_variation_setup_line(var_config) do
+    cond do
+      !var_config["production_variation_id"] && var_config["active"] != false ->
+        IO.puts("    • #{var_config["name"]} variation - TO BE CREATED")
+
+      var_config["active"] == false ->
+        IO.puts("    • #{var_config["name"]} variation - SKIPPED (inactive)")
+
+      true ->
+        nil
+    end
+  end
+
+  defp create_or_report_dry_run(true = _dry_run, _production_plans, _opts) do
+    IO.puts("\n📋 Dry run complete. Run without --dry-run to create these plans.")
+  end
+
+  defp create_or_report_dry_run(false = _dry_run, production_plans, opts) do
+    IO.puts("\n🚀 Creating production plans...")
+
+    Enum.each(production_plans, fn {plan_key, plan_config} ->
+      process_production_plan(plan_key, plan_config, opts)
+    end)
+
+    IO.puts("\n✅ Production setup complete!")
+    IO.puts("\n📝 Updated square_plans.json with production IDs")
+    IO.puts("\n🔄 Syncing all plan status with Square...")
+
+    updated_plan_configs = load_raw_plans(opts.app, opts.config_path)
+    sync_production_status(opts.app, updated_plan_configs, opts.config_path)
+  end
+
+  defp process_production_plan(plan_key, plan_config, opts) do
+    IO.puts("\n📦 Processing: #{plan_config["name"]}")
+
+    production_base_id = resolve_production_base_id(plan_key, plan_config, opts)
+
+    maybe_create_production_variations(production_base_id, plan_key, plan_config, opts)
+  end
+
+  defp resolve_production_base_id(plan_key, plan_config, opts) do
+    if plan_config["production_base_plan_id"] do
+      IO.puts(
+        "  ✓ Using existing production base plan: #{plan_config["production_base_plan_id"]}"
+      )
+
+      plan_config["production_base_plan_id"]
+    else
+      create_production_base_plan(opts.app, plan_key, plan_config, opts.config_path)
+    end
+  end
+
+  defp maybe_create_production_variations(production_base_id, plan_key, plan_config, opts) do
+    if production_base_id && plan_config["variations"] do
+      create_production_variations(opts, plan_key, plan_config, production_base_id)
+    end
   end
 
   defp get_app(nil) do
@@ -223,102 +286,128 @@ defmodule Mix.Tasks.Square.SetupProduction do
 
   defp filter_production_unconfigured(plan_configs) do
     plan_configs
-    |> Enum.filter(fn {plan_key, config} ->
-      # Skip free plans
-      if config["type"] == "free" do
-        false
-      else
-        has_base = config["production_base_plan_id"] != nil
-
-        needs_variations =
-          if config["variations"] do
-            Enum.any?(config["variations"], fn {_var_key, var} ->
-              # Only check active variations
-              var["active"] != false && !var["production_variation_id"]
-            end)
-          else
-            false
-          end
-
-        result = !has_base || needs_variations
-
-        if result do
-          IO.puts(
-            "Plan #{plan_key} needs setup: has_base=#{has_base}, needs_variations=#{needs_variations}"
-          )
-        end
-
-        result
-      end
-    end)
+    |> Enum.filter(fn {plan_key, config} -> plan_needs_production_setup?(plan_key, config) end)
     |> Enum.into(%{})
+  end
+
+  # Skip free plans
+  defp plan_needs_production_setup?(_plan_key, %{"type" => "free"}), do: false
+
+  defp plan_needs_production_setup?(plan_key, config) do
+    has_base = config["production_base_plan_id"] != nil
+    needs_variations = variations_need_production?(config["variations"])
+    result = !has_base || needs_variations
+
+    maybe_log_plan_setup(result, plan_key, has_base, needs_variations)
+
+    result
+  end
+
+  defp variations_need_production?(nil), do: false
+
+  defp variations_need_production?(variations) do
+    # Only check active variations
+    Enum.any?(variations, fn {_var_key, var} ->
+      var["active"] != false && !var["production_variation_id"]
+    end)
+  end
+
+  defp maybe_log_plan_setup(false, _plan_key, _has_base, _needs_variations), do: :ok
+
+  defp maybe_log_plan_setup(true, plan_key, has_base, needs_variations) do
+    IO.puts(
+      "Plan #{plan_key} needs setup: has_base=#{has_base}, needs_variations=#{needs_variations}"
+    )
   end
 
   defp show_production_config(plan_configs) do
     Enum.each(plan_configs, fn {plan_key, config} ->
-      if config["type"] != "free" do
-        IO.puts("\n  #{config["name"]} (#{plan_key}):")
-        IO.puts("    Base ID: #{config["production_base_plan_id"] || "NOT SET"}")
+      show_plan_production_config(plan_key, config)
+    end)
+  end
 
-        if config["variations"] do
-          Enum.each(config["variations"], fn {_var_key, var} ->
-            IO.puts("    #{var["name"]}: #{var["production_variation_id"] || "NOT SET"}")
-          end)
-        end
-      end
+  defp show_plan_production_config(_plan_key, %{"type" => "free"}), do: :ok
+
+  defp show_plan_production_config(plan_key, config) do
+    IO.puts("\n  #{config["name"]} (#{plan_key}):")
+    IO.puts("    Base ID: #{config["production_base_plan_id"] || "NOT SET"}")
+
+    show_variation_production_config(config["variations"])
+  end
+
+  defp show_variation_production_config(nil), do: :ok
+
+  defp show_variation_production_config(variations) do
+    Enum.each(variations, fn {_var_key, var} ->
+      IO.puts("    #{var["name"]}: #{var["production_variation_id"] || "NOT SET"}")
     end)
   end
 
   defp sync_production_status(app, plan_configs, _config_path) do
     # Sync active status and names for all configured production plans and variations
     Enum.each(plan_configs, fn {_plan_key, config} ->
-      if config["type"] != "free" do
-        prefixed_name = get_prefixed_plan_name(app, config["name"])
-        IO.puts("\n📦 Syncing: #{prefixed_name}")
-
-        # Update base plan name if it has a production ID
-        if config["production_base_plan_id"] do
-          update_plan_name(config["production_base_plan_id"], prefixed_name, "base plan")
-        end
-
-        if config["variations"] do
-          Enum.each(config["variations"], fn {_var_key, variation_config} ->
-            variation_id = variation_config["production_variation_id"]
-            is_active = variation_config["active"] != false
-
-            cond do
-              # Has production ID and should be active - ensure it's active and name is updated
-              variation_id && is_active ->
-                ensure_production_variation_active(variation_id, variation_config["name"])
-                update_plan_name(variation_id, variation_config["name"], "variation")
-
-              # Has production ID but should be inactive - ensure it's deactivated
-              variation_id && !is_active ->
-                ensure_production_variation_inactive(variation_id, variation_config["name"])
-
-              # No production ID and inactive - nothing to do
-              !variation_id && !is_active ->
-                IO.puts(
-                  "  ⏭️  Skipping inactive variation without ID: #{variation_config["name"]}"
-                )
-
-              # No production ID but active - warn that it needs to be created
-              !variation_id && is_active ->
-                IO.puts(
-                  "  ⚠️  Active variation missing production ID: #{variation_config["name"]}"
-                )
-
-                IO.puts("      Run without existing IDs to create this variation")
-
-              true ->
-                nil
-            end
-          end)
-        end
-      end
+      sync_plan_production_status(app, config)
     end)
 
     IO.puts("\n✅ Production sync complete!")
+  end
+
+  defp sync_plan_production_status(_app, %{"type" => "free"}), do: :ok
+
+  defp sync_plan_production_status(app, config) do
+    prefixed_name = get_prefixed_plan_name(app, config["name"])
+    IO.puts("\n📦 Syncing: #{prefixed_name}")
+
+    # Update base plan name if it has a production ID
+    maybe_sync_base_plan_name(config["production_base_plan_id"], prefixed_name)
+
+    sync_variation_statuses(config["variations"])
+  end
+
+  defp maybe_sync_base_plan_name(nil, _prefixed_name), do: :ok
+
+  defp maybe_sync_base_plan_name(base_plan_id, prefixed_name) do
+    update_plan_name(base_plan_id, prefixed_name, "base plan")
+  end
+
+  defp sync_variation_statuses(nil), do: :ok
+
+  defp sync_variation_statuses(variations) do
+    Enum.each(variations, fn {_var_key, variation_config} ->
+      sync_variation_status(variation_config)
+    end)
+  end
+
+  defp sync_variation_status(variation_config) do
+    dispatch_sync_variation(
+      variation_config["production_variation_id"],
+      variation_config["active"] != false,
+      variation_config
+    )
+  end
+
+  # Has production ID and should be active - ensure it's active and name is updated
+  defp dispatch_sync_variation(variation_id, true, variation_config)
+       when not is_nil(variation_id) do
+    ensure_production_variation_active(variation_id, variation_config["name"])
+    update_plan_name(variation_id, variation_config["name"], "variation")
+  end
+
+  # Has production ID but should be inactive - ensure it's deactivated
+  defp dispatch_sync_variation(variation_id, false, variation_config)
+       when not is_nil(variation_id) do
+    ensure_production_variation_inactive(variation_id, variation_config["name"])
+  end
+
+  # No production ID and inactive - nothing to do
+  defp dispatch_sync_variation(nil, false, variation_config) do
+    IO.puts("  ⏭️  Skipping inactive variation without ID: #{variation_config["name"]}")
+  end
+
+  # No production ID but active - warn that it needs to be created
+  defp dispatch_sync_variation(nil, true, variation_config) do
+    IO.puts("  ⚠️  Active variation missing production ID: #{variation_config["name"]}")
+    IO.puts("      Run without existing IDs to create this variation")
   end
 
   defp create_production_base_plan(app, plan_key, plan_config, config_path) do
@@ -345,52 +434,69 @@ defmodule Mix.Tasks.Square.SetupProduction do
     end
   end
 
-  defp create_production_variations(app, plan_key, plan_config, base_plan_id, config_path) do
+  defp create_production_variations(opts, plan_key, plan_config, base_plan_id) do
+    ctx = %{
+      app: opts.app,
+      config_path: opts.config_path,
+      plan_key: plan_key,
+      base_plan_id: base_plan_id
+    }
+
     Enum.each(plan_config["variations"] || %{}, fn {variation_key, variation_config} ->
-      variation_id = variation_config["production_variation_id"]
-      is_active = variation_config["active"] != false
-
-      cond do
-        # Has ID and is active - ensure it's active in Square
-        variation_id && is_active ->
-          ensure_production_variation_active(variation_id, variation_config["name"])
-
-        # Has ID but inactive - ensure it's deactivated in Square
-        variation_id && !is_active ->
-          ensure_production_variation_inactive(variation_id, variation_config["name"])
-
-        # No ID but active - create it
-        !variation_id && is_active ->
-          IO.puts("  📝 Creating production variation: #{variation_config["name"]}")
-
-          case Catalog.create_plan_variation(%{
-                 base_plan_id: base_plan_id,
-                 name: variation_config["name"],
-                 cadence: variation_config["cadence"],
-                 amount: variation_config["amount"],
-                 currency: variation_config["currency"]
-               }) do
-            {:ok, result} ->
-              IO.puts("  ✅ Created variation: #{result.variation_id}")
-
-              # Update the production ID field in config
-              update_production_variation_id(
-                app,
-                plan_key,
-                variation_key,
-                result.variation_id,
-                config_path
-              )
-
-            {:error, reason} ->
-              IO.puts("  ❌ Failed to create variation: #{inspect(reason)}")
-          end
-
-        # No ID and inactive - skip
-        true ->
-          IO.puts("  ⏭️  Skipping inactive variation: #{variation_config["name"]}")
-      end
+      process_production_variation(ctx, variation_key, variation_config)
     end)
+  end
+
+  defp process_production_variation(ctx, variation_key, variation_config) do
+    dispatch_production_variation(
+      variation_config["production_variation_id"],
+      variation_config["active"] != false,
+      ctx,
+      variation_key,
+      variation_config
+    )
+  end
+
+  # Has ID and is active - ensure it's active in Square
+  defp dispatch_production_variation(variation_id, true, _ctx, _variation_key, variation_config)
+       when not is_nil(variation_id) do
+    ensure_production_variation_active(variation_id, variation_config["name"])
+  end
+
+  # Has ID but inactive - ensure it's deactivated in Square
+  defp dispatch_production_variation(variation_id, false, _ctx, _variation_key, variation_config)
+       when not is_nil(variation_id) do
+    ensure_production_variation_inactive(variation_id, variation_config["name"])
+  end
+
+  # No ID but active - create it
+  defp dispatch_production_variation(nil, true, ctx, variation_key, variation_config) do
+    IO.puts("  📝 Creating production variation: #{variation_config["name"]}")
+    create_production_variation(ctx, variation_key, variation_config)
+  end
+
+  # No ID and inactive - skip
+  defp dispatch_production_variation(nil, false, _ctx, _variation_key, variation_config) do
+    IO.puts("  ⏭️  Skipping inactive variation: #{variation_config["name"]}")
+  end
+
+  defp create_production_variation(ctx, variation_key, variation_config) do
+    case Catalog.create_plan_variation(%{
+           base_plan_id: ctx.base_plan_id,
+           name: variation_config["name"],
+           cadence: variation_config["cadence"],
+           amount: variation_config["amount"],
+           currency: variation_config["currency"]
+         }) do
+      {:ok, result} ->
+        IO.puts("  ✅ Created variation: #{result.variation_id}")
+
+        # Update the production ID field in config
+        update_production_variation_id(ctx, variation_key, result.variation_id)
+
+      {:error, reason} ->
+        IO.puts("  ❌ Failed to create variation: #{inspect(reason)}")
+    end
   end
 
   defp ensure_production_variation_active(variation_id, name) do
@@ -437,26 +543,32 @@ defmodule Mix.Tasks.Square.SetupProduction do
   end
 
   defp update_catalog_status(object_id, should_deactivate) do
-    with {:ok, current_object} <- Catalog.get(object_id) do
-      # Set present_at_all_locations to false to deactivate, true to activate
-      updated_object = Map.put(current_object, "present_at_all_locations", !should_deactivate)
+    case Catalog.get(object_id) do
+      {:ok, current_object} ->
+        # Set present_at_all_locations to false to deactivate, true to activate
+        updated_object = Map.put(current_object, "present_at_all_locations", !should_deactivate)
+        apply_catalog_status(object_id, updated_object, should_deactivate)
 
-      case update_catalog_object(object_id, updated_object) do
-        :ok ->
-          action = if should_deactivate, do: "Deactivated", else: "Reactivated"
-          IO.puts("    ✅ #{action} successfully")
-          :ok
-
-        {:error, reason} ->
-          IO.puts("    ❌ Failed to update status: #{reason}")
-          {:error, reason}
-      end
-    else
       {:error, reason} ->
         IO.puts("    ❌ Failed to get current object: #{inspect(reason)}")
         {:error, reason}
     end
   end
+
+  defp apply_catalog_status(object_id, updated_object, should_deactivate) do
+    case update_catalog_object(object_id, updated_object) do
+      :ok ->
+        IO.puts("    ✅ #{status_action(should_deactivate)} successfully")
+        :ok
+
+      {:error, reason} ->
+        IO.puts("    ❌ Failed to update status: #{reason}")
+        {:error, reason}
+    end
+  end
+
+  defp status_action(true), do: "Deactivated"
+  defp status_action(false), do: "Reactivated"
 
   # Helper to update production base plan ID
   defp update_production_base_plan_id(app, plan_key, base_plan_id, config_path) do
@@ -471,18 +583,18 @@ defmodule Mix.Tasks.Square.SetupProduction do
   end
 
   # Helper to update production variation ID
-  defp update_production_variation_id(app, plan_key, variation_key, variation_id, config_path) do
-    config = load_raw_config(app, config_path)
+  defp update_production_variation_id(ctx, variation_key, variation_id) do
+    config = load_raw_config(ctx.app, ctx.config_path)
 
     updated_config =
       config
-      |> ensure_variation_exists(plan_key, variation_key)
+      |> ensure_variation_exists(ctx.plan_key, variation_key)
       |> put_in(
-        ["plans", plan_key, "variations", variation_key, "production_variation_id"],
+        ["plans", ctx.plan_key, "variations", variation_key, "production_variation_id"],
         variation_id
       )
 
-    save_config(app, updated_config, config_path)
+    save_config(ctx.app, updated_config, ctx.config_path)
   end
 
   defp load_raw_config(app, config_path) do
@@ -503,7 +615,7 @@ defmodule Mix.Tasks.Square.SetupProduction do
   defp save_config(app, config, config_path) do
     path = Application.app_dir(app, Path.join("priv", config_path))
 
-    Path.dirname(path) |> File.mkdir_p!()
+    File.mkdir_p!(Path.dirname(path))
 
     content = JSON.encode!(config)
     formatted = format_json(content)
@@ -553,31 +665,40 @@ defmodule Mix.Tasks.Square.SetupProduction do
   defp extract_error_message(body), do: "HTTP error: #{inspect(body)}"
 
   defp update_plan_name(object_id, new_name, object_type) do
-    with {:ok, current_object} <- Catalog.get(object_id) do
-      current_name = get_object_name(current_object)
+    case Catalog.get(object_id) do
+      {:ok, current_object} ->
+        sync_object_name(object_id, current_object, new_name, object_type)
 
-      if current_name == new_name do
-        IO.puts("  ✓ #{String.capitalize(object_type)} name is already '#{new_name}'")
-        :ok
-      else
-        IO.puts("  🔄 Updating #{object_type} name from '#{current_name}' to '#{new_name}'")
-
-        # Update the name in the appropriate field based on object type
-        updated_object = update_object_name(current_object, new_name)
-
-        case update_catalog_object(object_id, updated_object) do
-          :ok ->
-            IO.puts("     ✅ Name updated successfully")
-            :ok
-
-          {:error, reason} ->
-            IO.puts("     ❌ Failed to update name: #{reason}")
-            {:error, reason}
-        end
-      end
-    else
       {:error, reason} ->
         IO.puts("  ⚠️  Could not check #{object_type} name: #{inspect(reason)}")
+        {:error, reason}
+    end
+  end
+
+  defp sync_object_name(object_id, current_object, new_name, object_type) do
+    current_name = get_object_name(current_object)
+
+    if current_name == new_name do
+      IO.puts("  ✓ #{String.capitalize(object_type)} name is already '#{new_name}'")
+      :ok
+    else
+      rename_catalog_object(object_id, current_object, new_name, object_type, current_name)
+    end
+  end
+
+  defp rename_catalog_object(object_id, current_object, new_name, object_type, current_name) do
+    IO.puts("  🔄 Updating #{object_type} name from '#{current_name}' to '#{new_name}'")
+
+    # Update the name in the appropriate field based on object type
+    updated_object = update_object_name(current_object, new_name)
+
+    case update_catalog_object(object_id, updated_object) do
+      :ok ->
+        IO.puts("     ✅ Name updated successfully")
+        :ok
+
+      {:error, reason} ->
+        IO.puts("     ❌ Failed to update name: #{reason}")
         {:error, reason}
     end
   end
@@ -585,7 +706,7 @@ defmodule Mix.Tasks.Square.SetupProduction do
   # Common function to update a catalog object in Square
   defp update_catalog_object(_object_id, updated_object) do
     body = %{
-      idempotency_key: :crypto.strong_rand_bytes(16) |> Base.encode16(case: :lower),
+      idempotency_key: Base.encode16(:crypto.strong_rand_bytes(16), case: :lower),
       object: updated_object
     }
 

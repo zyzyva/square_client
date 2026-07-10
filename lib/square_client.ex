@@ -45,6 +45,7 @@ defmodule SquareClient do
   @doc """
   Returns the current library version.
   """
+  @spec version() :: String.t()
   def version do
     "0.1.0"
   end
@@ -55,6 +56,7 @@ defmodule SquareClient do
   This function is provided for reference and runtime use. In config files,
   use the string directly: `"https://connect.squareupsandbox.com/v2"`
   """
+  @spec sandbox_api_url() :: String.t()
   def sandbox_api_url, do: "https://connect.squareupsandbox.com/v2"
 
   @doc """
@@ -63,6 +65,7 @@ defmodule SquareClient do
   This function is provided for reference and runtime use. In config files,
   use the string directly: `"https://connect.squareup.com/v2"`
   """
+  @spec production_api_url() :: String.t()
   def production_api_url, do: "https://connect.squareup.com/v2"
 
   @doc """
@@ -71,6 +74,7 @@ defmodule SquareClient do
   Use this in your HTML layouts to load the correct SDK version:
   `<script src="<%= SquareClient.sandbox_sdk_url() %>"></script>`
   """
+  @spec sandbox_sdk_url() :: String.t()
   def sandbox_sdk_url, do: "https://sandbox.web.squarecdn.com/v1/square.js"
 
   @doc """
@@ -79,6 +83,7 @@ defmodule SquareClient do
   Use this in your HTML layouts to load the correct SDK version:
   `<script src="<%= SquareClient.production_sdk_url() %>"></script>`
   """
+  @spec production_sdk_url() :: String.t()
   def production_sdk_url, do: "https://web.squarecdn.com/v1/square.js"
 
   @doc """
@@ -93,6 +98,7 @@ defmodule SquareClient do
       <script type="text/javascript" src={SquareClient.sdk_url()}>
       </script>
   """
+  @spec sdk_url() :: String.t()
   def sdk_url do
     api_url = Application.get_env(:square_client, :api_url)
 

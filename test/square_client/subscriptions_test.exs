@@ -694,7 +694,7 @@ defmodule SquareClient.SubscriptionsTest do
       System.delete_env("SQUARE_ENVIRONMENT")
 
       # Should default to sandbox
-      assert Subscriptions.__info__(:functions) |> Keyword.has_key?(:create)
+      assert Keyword.has_key?(Subscriptions.__info__(:functions), :create)
       # The api_url function is private, but we can test indirectly by making a request
     end
 
@@ -704,7 +704,7 @@ defmodule SquareClient.SubscriptionsTest do
 
       # Force module recompilation to pick up new env
       # In real usage, this would be set at compile time
-      assert Subscriptions.__info__(:functions) |> Keyword.has_key?(:create)
+      assert Keyword.has_key?(Subscriptions.__info__(:functions), :create)
     end
 
     test "disables retries in test environment", %{bypass: bypass} do

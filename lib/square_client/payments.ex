@@ -87,6 +87,8 @@ defmodule SquareClient.Payments do
         reference_id: "order-123"
       )
   """
+  @spec create(String.t(), integer(), String.t(), keyword()) ::
+          {:ok, map()} | {:error, term()}
   def create(source_id, amount, currency, opts \\ []) do
     body = %{
       idempotency_key: generate_idempotency_key(),
@@ -119,6 +121,7 @@ defmodule SquareClient.Payments do
   @doc """
   Get payment details.
   """
+  @spec get(String.t()) :: {:ok, map()} | {:error, term()}
   def get(payment_id) do
     "#{api_url()}/payments/#{payment_id}"
     |> Req.get(
@@ -133,6 +136,7 @@ defmodule SquareClient.Payments do
   @doc """
   Complete a payment that was created with autocomplete: false.
   """
+  @spec complete(String.t()) :: {:ok, map()} | {:error, term()}
   def complete(payment_id) do
     "#{api_url()}/payments/#{payment_id}/complete"
     |> Req.post(
@@ -147,6 +151,7 @@ defmodule SquareClient.Payments do
   @doc """
   Cancel a payment.
   """
+  @spec cancel(String.t()) :: :ok | {:error, term()}
   def cancel(payment_id) do
     "#{api_url()}/payments/#{payment_id}/cancel"
     |> Req.post(
@@ -161,6 +166,8 @@ defmodule SquareClient.Payments do
   @doc """
   Refund a payment.
   """
+  @spec refund(String.t(), integer(), String.t(), keyword()) ::
+          {:ok, map()} | {:error, term()}
   def refund(payment_id, amount, currency, opts \\ []) do
     body = %{
       idempotency_key: generate_idempotency_key(),
@@ -208,21 +215,23 @@ defmodule SquareClient.Payments do
         app_name: :my_app
       )
   """
+  @spec create_one_time(String.t(), String.t(), integer(), keyword()) ::
+          {:ok, map()} | {:error, term()}
   def create_one_time(customer_id, source_id, amount, opts \\ []) do
     currency = opts[:currency] || "USD"
     app_name = opts[:app_name] || "app"
-    description = opts[:description] || "One-time purchase"
 
     create(source_id, amount, currency,
       customer_id: customer_id,
       reference_id: "#{app_name}:otp:#{:rand.uniform(999_999)}",
-      note: description
+      note: opts[:description] || "One-time purchase"
     )
   end
 
   @doc """
   List payments with optional filters.
   """
+  @spec list(keyword()) :: {:ok, map()} | {:error, term()}
   def list(opts \\ []) do
     params =
       []
@@ -368,8 +377,7 @@ defmodule SquareClient.Payments do
 
   # Helper functions
   defp generate_idempotency_key do
-    :crypto.strong_rand_bytes(16)
-    |> Base.encode16(case: :lower)
+    Base.encode16(:crypto.strong_rand_bytes(16), case: :lower)
   end
 
   defp parse_error(body) when is_map(body) do

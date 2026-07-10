@@ -27,35 +27,22 @@ defmodule Mix.Tasks.Square.ListPlans do
     config: :string
   ]
 
+  @spec run([String.t()]) :: :ok
   def run(args) do
-    {opts, _, _} = OptionParser.parse(args, switches: @switches)
-
-    app = get_app(opts[:app])
-    config_path = opts[:config] || "square_plans.json"
+    opts = parse_options(args)
 
     Mix.Task.run("app.start")
 
     IO.puts("Square Subscription Plans Configuration")
-    IO.puts("=" |> String.duplicate(50))
+    IO.puts(String.duplicate("=", 50))
     IO.puts("")
 
-    plan_configs = Plans.get_plans(app, config_path)
+    plan_configs = Plans.get_plans(opts.app, opts.config_path)
 
-    if map_size(plan_configs) == 0 do
-      IO.puts("No plans configured.")
-      IO.puts("\nInitialize a config file with:")
-      IO.puts("   mix square.init_plans --app #{app}")
-      exit(:normal)
-    end
+    ensure_plans_present!(plan_configs, opts)
 
     # Check overall status
-    all_configured = Plans.all_configured?(app, config_path)
-
-    if all_configured do
-      IO.puts("✅ All plans and variations are configured in Square\n")
-    else
-      IO.puts("⚠️  Some items need to be created in Square\n")
-    end
+    print_overall_status(Plans.all_configured?(opts.app, opts.config_path))
 
     # List each plan
     Enum.each(plan_configs, fn {plan_key, plan_config} ->
@@ -63,30 +50,71 @@ defmodule Mix.Tasks.Square.ListPlans do
     end)
 
     # Show unconfigured items
-    unconfigured = Plans.unconfigured_items(app, config_path)
+    show_unconfigured_items(Plans.unconfigured_items(opts.app, opts.config_path), opts)
+  end
 
+  defp parse_options(args) do
+    {opts, _, _} = OptionParser.parse(args, switches: @switches)
+
+    %{
+      app: get_app(opts[:app]),
+      config_path: opts[:config] || "square_plans.json"
+    }
+  end
+
+  defp ensure_plans_present!(plan_configs, opts) when map_size(plan_configs) == 0 do
+    IO.puts("No plans configured.")
+    IO.puts("\nInitialize a config file with:")
+    IO.puts("   mix square.init_plans --app #{opts.app}")
+    exit(:normal)
+  end
+
+  defp ensure_plans_present!(_plan_configs, _opts), do: :ok
+
+  defp print_overall_status(true = _all_configured) do
+    IO.puts("✅ All plans and variations are configured in Square\n")
+  end
+
+  defp print_overall_status(false = _all_configured) do
+    IO.puts("⚠️  Some items need to be created in Square\n")
+  end
+
+  defp show_unconfigured_items(unconfigured, opts) do
     if length(unconfigured.base_plans) > 0 or length(unconfigured.variations) > 0 do
-      IO.puts("\n" <> String.duplicate("-", 50))
-      IO.puts("Items needing creation:")
-
-      if length(unconfigured.base_plans) > 0 do
-        IO.puts("\n📦 Base Plans:")
-
-        Enum.each(unconfigured.base_plans, fn {key, plan} ->
-          IO.puts("   - #{key}: #{plan["name"]}")
-        end)
-      end
-
-      if length(unconfigured.variations) > 0 do
-        IO.puts("\n📋 Variations:")
-
-        Enum.each(unconfigured.variations, fn {plan_key, var_key, var, _base_id} ->
-          IO.puts("   - #{plan_key}.#{var_key}: #{var["name"] || var_key}")
-        end)
-      end
-
-      IO.puts("\nRun 'mix square.setup_plans --app #{app}' to create these items")
+      print_unconfigured_items(unconfigured, opts)
+    else
+      :ok
     end
+  end
+
+  defp print_unconfigured_items(unconfigured, opts) do
+    IO.puts("\n" <> String.duplicate("-", 50))
+    IO.puts("Items needing creation:")
+
+    print_unconfigured_base_plans(unconfigured.base_plans)
+    print_unconfigured_variations(unconfigured.variations)
+
+    IO.puts("\nRun 'mix square.setup_plans --app #{opts.app}' to create these items")
+  end
+
+  defp print_unconfigured_base_plans([]), do: :ok
+
+  defp print_unconfigured_base_plans(base_plans) do
+    IO.puts("\n📦 Base Plans:")
+
+    Enum.each(base_plans, fn {key, plan} ->
+      IO.puts("   - #{key}: #{plan["name"]}")
+    end)
+  end
+
+  defp print_unconfigured_variations([]), do: :ok
+
+  defp print_unconfigured_variations(variations) do
+    IO.puts("\n📋 Variations:")
+
+    Enum.each(variations, fn {plan_key, var_key, var, _base_id} ->
+      IO.puts("   - #{plan_key}.#{var_key}: #{var["name"] || var_key}")
+    end)
   end
 
   defp get_app(nil) do
@@ -105,41 +133,61 @@ defmodule Mix.Tasks.Square.ListPlans do
     IO.puts("📦 #{plan_key}: #{plan_config["name"] || plan_key}")
     IO.puts("   #{base_status} Base Plan ID: #{plan_config["base_plan_id"] || "Not created"}")
 
-    if plan_config["description"] do
-      IO.puts("   Description: #{plan_config["description"]}")
-    end
+    maybe_print_description(plan_config["description"])
 
-    variations = plan_config["variations"] || %{}
-
-    if map_size(variations) > 0 do
-      IO.puts("   Variations:")
-
-      Enum.each(variations, fn {var_key, var_config} ->
-        var_status = if var_config["variation_id"], do: "✅", else: "❌"
-
-        IO.puts("      #{var_status} #{var_key}:")
-        IO.puts("         Name: #{var_config["name"] || var_key}")
-
-        if var_config["variation_id"] do
-          IO.puts("         ID: #{var_config["variation_id"]}")
-        else
-          IO.puts("         ID: Not created")
-        end
-
-        if var_config["amount"] do
-          amount_display = format_amount(var_config["amount"], var_config["currency"])
-          IO.puts("         Amount: #{amount_display}")
-        end
-
-        if var_config["cadence"] do
-          IO.puts("         Cadence: #{var_config["cadence"]}")
-        end
-      end)
-    else
-      IO.puts("   No variations configured")
-    end
+    display_variations(plan_config["variations"] || %{})
 
     IO.puts("")
+  end
+
+  defp maybe_print_description(nil), do: :ok
+
+  defp maybe_print_description(description) do
+    IO.puts("   Description: #{description}")
+  end
+
+  defp display_variations(variations) when map_size(variations) == 0 do
+    IO.puts("   No variations configured")
+  end
+
+  defp display_variations(variations) do
+    IO.puts("   Variations:")
+
+    Enum.each(variations, fn {var_key, var_config} ->
+      display_variation(var_key, var_config)
+    end)
+  end
+
+  defp display_variation(var_key, var_config) do
+    var_status = if var_config["variation_id"], do: "✅", else: "❌"
+
+    IO.puts("      #{var_status} #{var_key}:")
+    IO.puts("         Name: #{var_config["name"] || var_key}")
+
+    print_variation_id(var_config["variation_id"])
+    maybe_print_amount(var_config["amount"], var_config["currency"])
+    maybe_print_cadence(var_config["cadence"])
+  end
+
+  defp print_variation_id(nil) do
+    IO.puts("         ID: Not created")
+  end
+
+  defp print_variation_id(variation_id) do
+    IO.puts("         ID: #{variation_id}")
+  end
+
+  defp maybe_print_amount(nil, _currency), do: :ok
+
+  defp maybe_print_amount(amount, currency) do
+    amount_display = format_amount(amount, currency)
+    IO.puts("         Amount: #{amount_display}")
+  end
+
+  defp maybe_print_cadence(nil), do: :ok
+
+  defp maybe_print_cadence(cadence) do
+    IO.puts("         Cadence: #{cadence}")
   end
 
   defp format_amount(amount_cents, "USD") do

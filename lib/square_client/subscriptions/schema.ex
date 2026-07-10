@@ -173,16 +173,18 @@ defmodule SquareClient.Subscriptions.Schema do
 
         active_statuses = ["ACTIVE", "PENDING"]
 
-        from(s in __MODULE__,
-          where: field(s, ^owner_field) == ^owner_id,
-          where: s.status in ^active_statuses,
-          order_by: [
-            fragment("CASE WHEN ? = 'ACTIVE' THEN 0 ELSE 1 END", s.status),
-            desc: s.inserted_at
-          ],
-          limit: 1
-        )
-        |> Repo.one()
+        query =
+          from(s in __MODULE__,
+            where: field(s, ^owner_field) == ^owner_id,
+            where: s.status in ^active_statuses,
+            order_by: [
+              fragment("CASE WHEN ? = 'ACTIVE' THEN 0 ELSE 1 END", s.status),
+              desc: s.inserted_at
+            ],
+            limit: 1
+          )
+
+        Repo.one(query)
       end
 
       def get_active_for_owner(%{id: owner_id}) do

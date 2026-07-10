@@ -59,6 +59,7 @@ defmodule SquareClient.Customers do
         family_name: "Doe"
       })
   """
+  @spec create(map()) :: {:ok, map()} | {:error, term()}
   def create(customer_data) do
     body =
       %{
@@ -85,6 +86,7 @@ defmodule SquareClient.Customers do
   @doc """
   Get customer details by ID.
   """
+  @spec get(String.t()) :: {:ok, map()} | {:error, term()}
   def get(customer_id) do
     "#{api_url()}/customers/#{customer_id}"
     |> Req.get(
@@ -99,6 +101,7 @@ defmodule SquareClient.Customers do
   @doc """
   Create a card on file for a customer.
   """
+  @spec create_card(String.t(), String.t()) :: {:ok, map()} | {:error, term()}
   def create_card(customer_id, card_nonce) do
     body = %{
       idempotency_key: generate_idempotency_key(),
@@ -146,6 +149,6 @@ defmodule SquareClient.Customers do
   defp parse_error(_), do: "Unknown error"
 
   defp generate_idempotency_key do
-    :crypto.strong_rand_bytes(16) |> Base.encode16(case: :lower)
+    Base.encode16(:crypto.strong_rand_bytes(16), case: :lower)
   end
 end

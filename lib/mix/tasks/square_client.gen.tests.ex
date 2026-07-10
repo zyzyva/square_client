@@ -63,6 +63,7 @@ defmodule Mix.Tasks.SquareClient.Gen.Tests do
   ]
 
   @impl Mix.Task
+  @spec run([String.t()]) :: :ok
   def run(args) do
     {opts, positional_args, _} =
       OptionParser.parse(args,
@@ -70,28 +71,8 @@ defmodule Mix.Tasks.SquareClient.Gen.Tests do
         aliases: [a: :accounts_context, r: :repo]
       )
 
-    accounts_context = Keyword.get(opts, :accounts_context, "Accounts")
-    repo = Keyword.get(opts, :repo, "Repo")
-
     # Auto-detect app name from Mix.Project, or use provided argument
-    app_name =
-      case positional_args do
-        [name | _] ->
-          name
-
-        [] ->
-          Mix.Project.config()[:app]
-          |> Atom.to_string()
-          |> Macro.camelize()
-      end
-
-    # Calculate paths and module names
-    app_module =
-      case app_name do
-        name when is_binary(name) -> Macro.camelize(name)
-        name when is_atom(name) -> name |> Atom.to_string() |> Macro.camelize()
-      end
-
+    app_module = detect_app_module(positional_args)
     app_path = Macro.underscore(app_module)
 
     Mix.shell().info([
@@ -105,21 +86,48 @@ defmodule Mix.Tasks.SquareClient.Gen.Tests do
     create_test_directories(app_path)
 
     # Generate auth helper tests if auth helpers exist
+    maybe_generate_auth_tests(app_path)
+
+    # Generate each test file
+    generate_test_files(build_replacements(opts, app_module, app_path))
+
+    print_completion_summary()
+  end
+
+  # Auto-detect app name from Mix.Project, or use provided argument
+  defp detect_app_module([name | _]) when is_binary(name), do: Macro.camelize(name)
+
+  defp detect_app_module([]) do
+    app = Mix.Project.config()[:app]
+
+    app
+    |> Atom.to_string()
+    |> Macro.camelize()
+  end
+
+  defp build_replacements(opts, app_module, app_path) do
+    %{
+      app_module: app_module,
+      app_path: app_path,
+      accounts_context: Keyword.get(opts, :accounts_context, "Accounts"),
+      repo: Keyword.get(opts, :repo, "Repo")
+    }
+  end
+
+  defp maybe_generate_auth_tests(app_path) do
     if File.exists?("lib/#{app_path}_web/subscription_auth.ex") do
       Mix.shell().info("\n📝 Generating subscription auth tests...")
       Mix.Task.run("square_client.gen.auth_tests", [])
     end
+  end
 
-    # Generate each test file
+  defp generate_test_files(replacements) do
     for {template_path, dest_path} <- @test_files do
-      generate_test_file(template_path, dest_path, %{
-        app_module: app_module,
-        app_path: app_path,
-        accounts_context: accounts_context,
-        repo: repo
-      })
+      generate_test_file(template_path, dest_path, replacements)
     end
+  end
 
+  defp print_completion_summary do
     Mix.shell().info([:green, "* Test generation complete!"])
     Mix.shell().info("\nGenerated #{length(@test_files)} test files with comprehensive coverage:")
     Mix.shell().info("  - Core payment context tests")
@@ -150,30 +158,31 @@ defmodule Mix.Tasks.SquareClient.Gen.Tests do
   end
 
   defp generate_test_file(template_path, dest_path, replacements) do
+    # Read template (or use from payments-refactor-use-json branch if not yet created)
+    content = read_test_template(template_path)
+
+    # Replace placeholders
+    transformed_content = transform_template(content, replacements)
+
+    # Calculate destination path
+    dest_full_path = String.replace(dest_path, "APP_PATH", replacements.app_path)
+
+    # Write file
+    File.write!(dest_full_path, transformed_content)
+    Mix.shell().info([:green, "* created ", :reset, dest_full_path])
+  end
+
+  defp read_test_template(template_path) do
     template_full_path =
       :square_client
       |> Application.app_dir()
       |> Path.join("priv/templates")
       |> Path.join(template_path)
 
-    # Read template (or use from payments-refactor-use-json branch if not yet created)
-    content =
-      case File.read(template_full_path) do
-        {:ok, content} -> content
-        {:error, _} -> fetch_from_contacts4us(template_path)
-      end
-
-    # Replace placeholders
-    transformed_content = transform_template(content, replacements)
-
-    # Calculate destination path
-    dest_full_path =
-      dest_path
-      |> String.replace("APP_PATH", replacements.app_path)
-
-    # Write file
-    File.write!(dest_full_path, transformed_content)
-    Mix.shell().info([:green, "* created ", :reset, dest_full_path])
+    case File.read(template_full_path) do
+      {:ok, content} -> content
+      {:error, _} -> fetch_from_contacts4us(template_path)
+    end
   end
 
   defp transform_template(content, replacements) do

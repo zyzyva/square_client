@@ -11,7 +11,7 @@ defmodule SquareClient.PlansTest do
     path = Application.app_dir(@test_app, Path.join("priv", @test_config))
 
     # Ensure app directory exists
-    Application.app_dir(@test_app, "priv") |> File.mkdir_p!()
+    File.mkdir_p!(Application.app_dir(@test_app, "priv"))
 
     # Clean up after test
     on_exit(fn ->

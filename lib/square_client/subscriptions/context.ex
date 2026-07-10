@@ -39,6 +39,7 @@ defmodule SquareClient.Subscriptions.Context do
 
       SquareClient.Subscriptions.Context.sync_from_square(subscription, MyApp.Repo)
   """
+  @spec sync_from_square(map(), module(), keyword()) :: {:ok, map()} | {:error, term()}
   def sync_from_square(subscription, repo, opts \\ [])
 
   def sync_from_square(%{square_subscription_id: nil} = subscription, _repo, _opts) do
@@ -71,6 +72,7 @@ defmodule SquareClient.Subscriptions.Context do
 
       SquareClient.Subscriptions.Context.should_sync?(subscription)
   """
+  @spec should_sync?(map()) :: boolean()
   def should_sync?(subscription) do
     cond do
       # Always sync if we don't have the next billing date
@@ -95,11 +97,12 @@ defmodule SquareClient.Subscriptions.Context do
 
       SquareClient.Subscriptions.Context.get_by_square_id("sub_123", MyApp.Subscription, MyApp.Repo)
   """
+  @spec get_by_square_id(String.t(), module(), module()) :: map() | nil
   def get_by_square_id(square_id, schema_module, repo) do
     import Ecto.Query
 
-    from(s in schema_module, where: s.square_subscription_id == ^square_id)
-    |> repo.one()
+    query = from(s in schema_module, where: s.square_subscription_id == ^square_id)
+    repo.one(query)
   end
 
   @doc """
@@ -115,6 +118,7 @@ defmodule SquareClient.Subscriptions.Context do
       SquareClient.Subscriptions.Context.parse_square_date(nil)
       #=> nil
   """
+  @spec parse_square_date(String.t() | nil) :: DateTime.t() | nil
   def parse_square_date(nil), do: nil
 
   def parse_square_date(date_string) when is_binary(date_string) do
@@ -129,40 +133,46 @@ defmodule SquareClient.Subscriptions.Context do
   @monthly_billing_days 30
 
   defp sync_square_data(subscription, square_data, repo) do
-    next_billing = parse_square_date(square_data["charged_through_date"])
     started_at = parse_square_date(square_data["start_date"])
-    canceled_at = parse_square_date(square_data["canceled_date"])
+    next_billing = build_next_billing(square_data, subscription, started_at)
 
-    next_billing = calculate_next_billing(next_billing, subscription, started_at)
+    changeset =
+      subscription.__struct__.changeset(subscription, %{
+        status: square_data["status"],
+        next_billing_at: next_billing,
+        started_at: started_at || subscription.started_at,
+        canceled_at: parse_square_date(square_data["canceled_date"])
+      })
 
-    subscription.__struct__.changeset(subscription, %{
-      status: square_data["status"],
-      next_billing_at: next_billing,
-      started_at: started_at || subscription.started_at,
-      canceled_at: canceled_at
-    })
-    |> repo.update()
+    repo.update(changeset)
+  end
+
+  defp build_next_billing(square_data, subscription, started_at) do
+    charged_through = parse_square_date(square_data["charged_through_date"])
+    calculate_next_billing(charged_through, subscription, started_at)
   end
 
   # Calculate next billing when Square hasn't provided it yet
   defp calculate_next_billing(nil, %{plan_id: "premium_monthly"}, started_at)
        when not is_nil(started_at) do
-    DateTime.add(started_at, @monthly_billing_days, :day) |> DateTime.truncate(:second)
+    started_at |> DateTime.add(@monthly_billing_days, :day) |> DateTime.truncate(:second)
   end
 
   defp calculate_next_billing(nil, %{plan_id: "premium_monthly", started_at: started_at}, nil)
        when not is_nil(started_at) do
-    DateTime.add(started_at, @monthly_billing_days, :day) |> DateTime.truncate(:second)
+    started_at |> DateTime.add(@monthly_billing_days, :day) |> DateTime.truncate(:second)
   end
 
   defp calculate_next_billing(next_billing, _subscription, _started_at), do: next_billing
 
   defp mark_subscription_canceled(subscription, repo) do
     # Subscription doesn't exist in Square, mark as canceled locally
-    subscription.__struct__.changeset(subscription, %{
-      status: "CANCELED",
-      canceled_at: DateTime.utc_now() |> DateTime.truncate(:second)
-    })
-    |> repo.update()
+    changeset =
+      subscription.__struct__.changeset(subscription, %{
+        status: "CANCELED",
+        canceled_at: DateTime.truncate(DateTime.utc_now(), :second)
+      })
+
+    repo.update(changeset)
   end
 end

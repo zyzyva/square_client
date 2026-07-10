@@ -13,59 +13,64 @@ defmodule SquareClient.ConfigValidator do
   Logs errors for any plans/variations that are missing Square IDs for the current environment.
   Returns :ok regardless to allow the application to start.
   """
+  @spec validate_plans(atom(), String.t()) :: :ok
   def validate_plans(app_name, config_path \\ "square_plans.json") do
     # Check for immutable field changes first
     check_immutable_changes(app_name, config_path)
 
     # Then check for unconfigured plans
-    case SquareClient.Plans.unconfigured_items(app_name, config_path) do
-      %{base_plans: [], variations: []} ->
-        :ok
+    unconfigured = SquareClient.Plans.unconfigured_items(app_name, config_path)
+    log_unconfigured(unconfigured, app_name)
+  end
 
-      %{base_plans: base_plans, variations: variations} ->
-        env = SquareClient.Plans.environment(app_name)
+  defp log_unconfigured(%{base_plans: [], variations: []}, _app_name), do: :ok
 
-        unless Enum.empty?(base_plans) do
-          plan_names = Enum.map(base_plans, fn {key, _} -> key end) |> Enum.join(", ")
+  defp log_unconfigured(%{base_plans: base_plans, variations: variations}, app_name) do
+    env = SquareClient.Plans.environment(app_name)
+    log_missing_base_plans(base_plans, env)
+    log_missing_variations(variations, env)
+    :ok
+  end
 
-          Logger.error("""
-          ⚠️  Square subscription plans are not configured for #{env} environment!
+  defp log_missing_base_plans([], _env), do: :ok
 
-          Missing base plan IDs for: #{plan_names}
+  defp log_missing_base_plans(base_plans, env) do
+    plan_names = Enum.map_join(base_plans, ", ", fn {key, _} -> key end)
 
-          Run the following command to sync plans to Square:
-            mix square.setup_plans
+    Logger.error("""
+    ⚠️  Square subscription plans are not configured for #{env} environment!
 
-          Or for production:
-            mix square.setup_production
+    Missing base plan IDs for: #{plan_names}
 
-          Subscription features will not work until plans are configured.
-          """)
-        end
+    Run the following command to sync plans to Square:
+      mix square.setup_plans
 
-        unless Enum.empty?(variations) do
-          variation_info =
-            variations
-            |> Enum.map(fn {plan_key, var_key, _variation, _base_id} ->
-              "#{plan_key}/#{var_key}"
-            end)
-            |> Enum.join(", ")
+    Or for production:
+      mix square.setup_production
 
-          Logger.error("""
-          ⚠️  Square subscription plan variations are not configured for #{env} environment!
+    Subscription features will not work until plans are configured.
+    """)
+  end
 
-          Missing variation IDs for: #{variation_info}
+  defp log_missing_variations([], _env), do: :ok
 
-          Run the following command to sync plans to Square:
-            mix square.setup_plans
+  defp log_missing_variations(variations, env) do
+    variation_info =
+      Enum.map_join(variations, ", ", fn {plan_key, var_key, _variation, _base_id} ->
+        "#{plan_key}/#{var_key}"
+      end)
 
-          Or for production:
-            mix square.setup_production
-          """)
-        end
+    Logger.error("""
+    ⚠️  Square subscription plan variations are not configured for #{env} environment!
 
-        :ok
-    end
+    Missing variation IDs for: #{variation_info}
+
+    Run the following command to sync plans to Square:
+      mix square.setup_plans
+
+    Or for production:
+      mix square.setup_production
+    """)
   end
 
   defp check_immutable_changes(app_name, config_path) do

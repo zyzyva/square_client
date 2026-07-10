@@ -52,6 +52,7 @@ defmodule SquareClient.Subscriptions do
 
       SquareClient.Subscriptions.create("CUSTOMER_ID", "PLAN_ID", "CARD_ID")
   """
+  @spec create(String.t(), String.t(), String.t()) :: {:ok, map()} | {:error, term()}
   def create(customer_id, plan_variation_id, card_id) do
     # If card_id is a nonce (starts with cnon:), save it as a card first
     with {:ok, saved_card_id} <- ensure_card_saved(customer_id, card_id) do
@@ -94,34 +95,42 @@ defmodule SquareClient.Subscriptions do
       iex> create_with_plan_lookup("cust_123", "invalid_plan", "card_456")
       {:error, {:configuration_error, "Subscription plan not properly configured"}}
   """
+  @spec create_with_plan_lookup(String.t(), String.t(), String.t(), keyword()) ::
+          {:ok, map()} | {:error, term()}
   def create_with_plan_lookup(customer_id, plan_variation_key, card_token, opts \\ []) do
     app_name = opts[:app_name] || infer_app_name()
 
-    with {:ok, plan_variation_id} <- get_plan_variation_id(app_name, plan_variation_key),
-         {:ok, subscription} <- create(customer_id, plan_variation_id, card_token) do
-      {:ok, subscription}
-    else
+    case get_plan_variation_id(app_name, plan_variation_key) do
+      {:ok, plan_variation_id} ->
+        normalize_create_result(create(customer_id, plan_variation_id, card_token))
+
       {:error, :plan_not_found} ->
         Logger.error("Square plan ID not configured for plan: #{plan_variation_key}")
         {:error, {:configuration_error, "Subscription plan not properly configured"}}
-
-      {:error, {:card_declined, message}} ->
-        Logger.error("Card declined: #{message}")
-        {:error, {:card_declined, message}}
-
-      {:error, {:card_save_failed, reason}} ->
-        Logger.error("Failed to save card: #{inspect(reason)}")
-        {:error, {:card_save_failed, reason}}
-
-      {:error, message} when is_binary(message) ->
-        # API error with detail message from Square
-        Logger.error("Square API error: #{message}")
-        {:error, message}
-
-      {:error, reason} ->
-        Logger.error("Failed to create subscription: #{inspect(reason)}")
-        {:error, :subscription_failed}
     end
+  end
+
+  defp normalize_create_result({:ok, subscription}), do: {:ok, subscription}
+
+  defp normalize_create_result({:error, {:card_declined, message}}) do
+    Logger.error("Card declined: #{message}")
+    {:error, {:card_declined, message}}
+  end
+
+  defp normalize_create_result({:error, {:card_save_failed, reason}}) do
+    Logger.error("Failed to save card: #{inspect(reason)}")
+    {:error, {:card_save_failed, reason}}
+  end
+
+  # API error with detail message from Square
+  defp normalize_create_result({:error, message}) when is_binary(message) do
+    Logger.error("Square API error: #{message}")
+    {:error, message}
+  end
+
+  defp normalize_create_result({:error, reason}) do
+    Logger.error("Failed to create subscription: #{inspect(reason)}")
+    {:error, :subscription_failed}
   end
 
   @doc """
@@ -130,6 +139,8 @@ defmodule SquareClient.Subscriptions do
   Parses the plan key to extract plan and variation components,
   then looks up the Square ID from the app's configuration.
   """
+  @spec get_plan_variation_id(atom() | String.t(), atom() | String.t()) ::
+          {:ok, String.t()} | {:error, :plan_not_found}
   def get_plan_variation_id(app_name, plan_variation_key) do
     {plan_key, variation_key} = parse_plan_variation_key(plan_variation_key)
 
@@ -152,6 +163,7 @@ defmodule SquareClient.Subscriptions do
       iex> parse_plan_variation_key("basic")
       {"basic", "default"}
   """
+  @spec parse_plan_variation_key(atom() | String.t()) :: {String.t(), String.t()}
   def parse_plan_variation_key(key) do
     key_str = to_string(key)
 
@@ -190,6 +202,7 @@ defmodule SquareClient.Subscriptions do
 
     * `include` - List of additional data to include. Supported: `["actions"]`
   """
+  @spec get(String.t(), keyword()) :: {:ok, map()} | {:error, term()}
   def get(subscription_id, opts \\ []) do
     url = "#{api_url()}/subscriptions/#{subscription_id}"
 
@@ -221,6 +234,7 @@ defmodule SquareClient.Subscriptions do
     * `subscription_id` - Square subscription ID
     * `action_id` - The ID of the scheduled action to delete
   """
+  @spec delete_action(String.t(), String.t()) :: {:ok, map()} | {:error, term()}
   def delete_action(subscription_id, action_id) do
     "#{api_url()}/subscriptions/#{subscription_id}/actions/#{action_id}"
     |> Req.delete(
@@ -235,6 +249,7 @@ defmodule SquareClient.Subscriptions do
   @doc """
   Cancel a subscription.
   """
+  @spec cancel(String.t()) :: {:ok, map()} | {:error, term()}
   def cancel(subscription_id) do
     "#{api_url()}/subscriptions/#{subscription_id}/cancel"
     |> Req.post(

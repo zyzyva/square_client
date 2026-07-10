@@ -52,28 +52,44 @@ defmodule SquareClient.Subscriptions.Constants do
   @square_status_deactivated "DEACTIVATED"
 
   # Getters for tiers
+  @spec tier_free() :: String.t()
   def tier_free, do: @tier_free
+  @spec tier_premium() :: String.t()
   def tier_premium, do: @tier_premium
+  @spec tier_enterprise() :: String.t()
   def tier_enterprise, do: @tier_enterprise
 
+  @spec all_tiers() :: [String.t()]
   def all_tiers, do: [@tier_free, @tier_premium, @tier_enterprise]
 
   # Getters for statuses
+  @spec status_active() :: String.t()
   def status_active, do: @status_active
+  @spec status_inactive() :: String.t()
   def status_inactive, do: @status_inactive
+  @spec status_canceled() :: String.t()
   def status_canceled, do: @status_canceled
+  @spec status_past_due() :: String.t()
   def status_past_due, do: @status_past_due
 
+  @spec all_statuses() :: [String.t()]
   def all_statuses, do: [@status_active, @status_inactive, @status_canceled, @status_past_due]
 
   # Getters for Square statuses
+  @spec square_status_pending() :: String.t()
   def square_status_pending, do: @square_status_pending
+  @spec square_status_active() :: String.t()
   def square_status_active, do: @square_status_active
+  @spec square_status_canceled() :: String.t()
   def square_status_canceled, do: @square_status_canceled
+  @spec square_status_paused() :: String.t()
   def square_status_paused, do: @square_status_paused
+  @spec square_status_delinquent() :: String.t()
   def square_status_delinquent, do: @square_status_delinquent
+  @spec square_status_deactivated() :: String.t()
   def square_status_deactivated, do: @square_status_deactivated
 
+  @spec all_square_statuses() :: [String.t()]
   def all_square_statuses,
     do: [
       @square_status_pending,
@@ -85,16 +101,21 @@ defmodule SquareClient.Subscriptions.Constants do
     ]
 
   # Helper functions
-  def is_premium_tier?(tier), do: tier == @tier_premium
-  def is_free_tier?(tier), do: tier == @tier_free
-  def is_active_status?(status), do: status == @status_active
-  def is_square_active?(square_status), do: square_status == @square_status_active
+  @spec premium_tier?(String.t()) :: boolean()
+  def premium_tier?(tier), do: tier == @tier_premium
+  @spec free_tier?(String.t()) :: boolean()
+  def free_tier?(tier), do: tier == @tier_free
+  @spec active_status?(String.t()) :: boolean()
+  def active_status?(status), do: status == @status_active
+  @spec square_active?(String.t()) :: boolean()
+  def square_active?(square_status), do: square_status == @square_status_active
 
   @doc """
   Check if a user has active premium based on tier and status.
   """
+  @spec has_active_premium?(String.t(), String.t()) :: boolean()
   def has_active_premium?(tier, status) do
-    is_premium_tier?(tier) && is_active_status?(status)
+    premium_tier?(tier) && active_status?(status)
   end
 
   @doc """
@@ -111,6 +132,7 @@ defmodule SquareClient.Subscriptions.Constants do
       iex> SquareClient.Subscriptions.Constants.square_to_internal_status("CANCELED")
       "canceled"
   """
+  @spec square_to_internal_status(String.t()) :: String.t()
   def square_to_internal_status(@square_status_active), do: @status_active
   # Treat pending as active
   def square_to_internal_status(@square_status_pending), do: @status_active

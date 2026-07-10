@@ -24,6 +24,7 @@ defmodule Mix.Tasks.SquareClient.Gen.Auth do
 
   @shortdoc "Generates subscription authentication helpers"
 
+  @spec run([String.t()]) :: :ok
   def run(_args) do
     # Get app information
     app_name = Mix.Project.config()[:app]
@@ -84,18 +85,17 @@ defmodule Mix.Tasks.SquareClient.Gen.Auth do
     ]
 
     # Generate subscription auth module
-    auth_path = Path.join(web_dir, "subscription_auth.ex")
-    auth_template = read_template("subscription_auth.ex.eex")
-    auth_output = EEx.eval_string(auth_template, assigns)
-    File.write!(auth_path, auth_output)
-    Mix.shell().info("  * Created #{auth_path}")
+    generate_auth_module(web_dir, "subscription_auth.ex", "subscription_auth.ex.eex", assigns)
 
     # Generate subscription hooks module
-    hooks_path = Path.join(web_dir, "subscription_hooks.ex")
-    hooks_template = read_template("subscription_hooks.ex.eex")
-    hooks_output = EEx.eval_string(hooks_template, assigns)
-    File.write!(hooks_path, hooks_output)
-    Mix.shell().info("  * Created #{hooks_path}")
+    generate_auth_module(web_dir, "subscription_hooks.ex", "subscription_hooks.ex.eex", assigns)
+  end
+
+  defp generate_auth_module(web_dir, filename, template_name, assigns) do
+    path = Path.join(web_dir, filename)
+    output = EEx.eval_string(read_template(template_name), assigns)
+    File.write!(path, output)
+    Mix.shell().info("  * Created #{path}")
   end
 
   defp read_template(name) do

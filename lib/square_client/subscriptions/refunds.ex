@@ -46,6 +46,7 @@ defmodule SquareClient.Subscriptions.Refunds do
       iex> SquareClient.Subscriptions.Refunds.calculate_remaining_days(subscription)
       6
   """
+  @spec calculate_remaining_days(map() | nil) :: non_neg_integer()
   def calculate_remaining_days(nil), do: 0
 
   def calculate_remaining_days(%{status: "ACTIVE", next_billing_at: next_billing})
@@ -78,6 +79,7 @@ defmodule SquareClient.Subscriptions.Refunds do
       SquareClient.Subscriptions.Refunds.calculate_prorated_refund(subscription, 15, plan_config)
       #=> 500 (approximately half of 999 cents)
   """
+  @spec calculate_prorated_refund(map() | nil, non_neg_integer(), map()) :: non_neg_integer()
   def calculate_prorated_refund(nil, _, _plan_config), do: 0
   def calculate_prorated_refund(_, 0, _plan_config), do: 0
 
@@ -116,6 +118,7 @@ defmodule SquareClient.Subscriptions.Refunds do
         reason: "Upgrade refund"
       )
   """
+  @spec process_automatic_refund(map() | nil, non_neg_integer(), keyword()) :: :ok
   def process_automatic_refund(subscription, refund_amount, opts \\ [])
 
   def process_automatic_refund(nil, _, _opts), do: :ok
@@ -177,6 +180,7 @@ defmodule SquareClient.Subscriptions.Refunds do
       #     refund_status: "processed"
       #   }
   """
+  @spec build_refund_info(non_neg_integer(), non_neg_integer(), keyword()) :: map() | nil
   def build_refund_info(refund_amount, remaining_days, opts \\ [])
 
   def build_refund_info(refund_amount, remaining_days, opts) when refund_amount > 0 do

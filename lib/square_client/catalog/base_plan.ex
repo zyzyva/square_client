@@ -6,9 +6,15 @@ defmodule SquareClient.Catalog.BasePlan do
   @derive JSON.Encoder
   defstruct [:name, :description]
 
+  @type t :: %__MODULE__{
+          name: String.t() | nil,
+          description: String.t() | nil
+        }
+
   @doc """
   Creates a new base plan struct.
   """
+  @spec new(map()) :: t()
   def new(attrs) when is_map(attrs) do
     struct(__MODULE__, attrs)
   end
@@ -16,10 +22,10 @@ defmodule SquareClient.Catalog.BasePlan do
   @doc """
   Converts the struct to Square API format.
   """
+  @spec to_square_object(t()) :: map()
   def to_square_object(%__MODULE__{} = plan) do
     subscription_plan_data =
-      %{name: plan.name}
-      |> maybe_add_field(:description, plan.description)
+      maybe_add_field(%{name: plan.name}, :description, plan.description)
 
     %{
       type: "SUBSCRIPTION_PLAN",

@@ -21,3 +21,6 @@ square_client-*.tar
 
 # Temporary files, for example, from tests.
 /tmp/
+
+# Dialyzer PLT cache
+/priv/plts/

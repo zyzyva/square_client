@@ -8,6 +8,12 @@ defmodule SquareClient.MixProject do
       elixir: "~> 1.15",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
+      aliases: aliases(),
+      dialyzer: [
+        plt_local_path: "priv/plts",
+        plt_core_path: "priv/plts",
+        plt_add_apps: [:mix, :ex_unit]
+      ],
       description: "Square API client for Elixir with subscription management focus",
       package: package(),
       docs: [
@@ -15,6 +21,10 @@ defmodule SquareClient.MixProject do
         extras: ["README.md"]
       ]
     ]
+  end
+
+  def cli do
+    [preferred_envs: [check: :test, "check.all": :test]]
   end
 
   # Run "mix help compile.app" to learn about applications.
@@ -33,7 +43,27 @@ defmodule SquareClient.MixProject do
       {:ecto, "~> 3.13", optional: true},
       {:ex_doc, "~> 0.35", only: :dev, runtime: false},
       {:mox, "~> 1.1", only: :test},
-      {:bypass, "~> 2.1", only: :test}
+      {:bypass, "~> 2.1", only: :test},
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
+    ]
+  end
+
+  defp aliases do
+    [
+      check: [
+        "format --check-formatted",
+        "credo --strict",
+        "compile --warnings-as-errors",
+        "test"
+      ],
+      "check.all": [
+        "format --check-formatted",
+        "credo --strict",
+        "compile --warnings-as-errors",
+        "test",
+        "dialyzer"
+      ]
     ]
   end
 

@@ -79,7 +79,8 @@ defmodule SquareClient.WebhookPlugTest do
       signature = generate_signature(body, "test_signature_key")
 
       conn =
-        conn(:post, "/webhook", body)
+        :post
+        |> conn("/webhook", body)
         |> put_req_header("content-type", "application/json")
         |> put_req_header("x-square-hmacsha256-signature", signature)
         |> WebhookPlug.call([])
@@ -96,7 +97,8 @@ defmodule SquareClient.WebhookPlugTest do
 
       capture_log(fn ->
         conn =
-          conn(:post, "/webhook", body)
+          :post
+          |> conn("/webhook", body)
           |> put_req_header("content-type", "application/json")
           |> put_req_header("x-square-hmacsha256-signature", signature)
           |> WebhookPlug.call([])
@@ -113,7 +115,8 @@ defmodule SquareClient.WebhookPlugTest do
 
       capture_log(fn ->
         conn =
-          conn(:post, "/webhook", body)
+          :post
+          |> conn("/webhook", body)
           |> put_req_header("content-type", "application/json")
           |> put_req_header("x-square-hmacsha256-signature", "invalid_signature")
           |> WebhookPlug.call([])
@@ -127,7 +130,8 @@ defmodule SquareClient.WebhookPlugTest do
 
       capture_log(fn ->
         conn =
-          conn(:post, "/webhook", body)
+          :post
+          |> conn("/webhook", body)
           |> put_req_header("content-type", "application/json")
           |> WebhookPlug.call([])
 
@@ -143,7 +147,8 @@ defmodule SquareClient.WebhookPlugTest do
 
       capture_log(fn ->
         conn =
-          conn(:post, "/webhook", body)
+          :post
+          |> conn("/webhook", body)
           |> put_req_header("content-type", "application/json")
           |> put_req_header("x-square-hmacsha256-signature", signature)
           |> WebhookPlug.call([])
@@ -158,7 +163,8 @@ defmodule SquareClient.WebhookPlugTest do
 
       capture_log(fn ->
         conn =
-          conn(:post, "/webhook", body)
+          :post
+          |> conn("/webhook", body)
           |> put_req_header("content-type", "application/json")
           |> put_req_header("x-square-hmacsha256-signature", signature)
           |> WebhookPlug.call([])
@@ -177,7 +183,8 @@ defmodule SquareClient.WebhookPlugTest do
 
       capture_log(fn ->
         conn =
-          conn(:post, "/webhook", body)
+          :post
+          |> conn("/webhook", body)
           |> put_req_header("content-type", "application/json")
           |> put_req_header("x-square-hmacsha256-signature", "any_signature")
           |> WebhookPlug.call([])
@@ -198,7 +205,8 @@ defmodule SquareClient.WebhookPlugTest do
 
       capture_log(fn ->
         conn =
-          conn(:post, "/webhook", body)
+          :post
+          |> conn("/webhook", body)
           |> put_req_header("content-type", "application/json")
           |> put_req_header("x-square-hmacsha256-signature", signature)
           |> WebhookPlug.call([])
@@ -218,7 +226,8 @@ defmodule SquareClient.WebhookPlugTest do
 
       capture_log(fn ->
         conn =
-          conn(:post, "/webhook", body)
+          :post
+          |> conn("/webhook", body)
           |> put_req_header("content-type", "application/json")
           |> put_req_header("x-square-hmacsha256-signature", signature)
           |> WebhookPlug.call([])
@@ -237,7 +246,7 @@ defmodule SquareClient.WebhookPlugTest do
   # HMAC over notification_url <> body. Signing body-only here would
   # mirror the pre-2026-06-11 bug instead of testing Square's format.
   defp generate_signature(payload, key) do
-    :crypto.mac(:hmac, :sha256, key, @notification_url <> payload)
-    |> Base.encode64()
+    mac = :crypto.mac(:hmac, :sha256, key, @notification_url <> payload)
+    Base.encode64(mac)
   end
 end

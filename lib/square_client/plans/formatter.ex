@@ -39,17 +39,26 @@ defmodule SquareClient.Plans.Formatter do
         tier_types: :all
       )
   """
+  @spec get_subscription_plans(atom(), String.t(), keyword()) :: [map()]
   def get_subscription_plans(app, config_path \\ "square_plans.json", opts \\ []) do
     plans = SquareClient.Plans.get_plans(app, config_path)
-    plan_types = Keyword.get(opts, :plan_types)
-    include_inactive = Keyword.get(opts, :include_inactive, false)
-    tier_types = Keyword.get(opts, :tier_types, ["personal"])
+    build_subscription_plans(plans, parse_plan_opts(opts))
+  end
 
+  defp parse_plan_opts(opts) do
+    %{
+      plan_types: Keyword.get(opts, :plan_types),
+      include_inactive: Keyword.get(opts, :include_inactive, false),
+      tier_types: Keyword.get(opts, :tier_types, ["personal"])
+    }
+  end
+
+  defp build_subscription_plans(plans, plan_opts) do
     # Build the free plan if it exists. Free is always treated as a personal-tier
     # plan; if the caller is asking for team-only plans, the free plan is hidden.
     free_plan =
-      if tier_match?("personal", tier_types) do
-        build_free_plan(plans["free"], plan_types)
+      if tier_match?("personal", plan_opts.tier_types) do
+        build_free_plan(plans["free"], plan_opts.plan_types)
       end
 
     # Build premium/paid plans with variations
@@ -57,7 +66,13 @@ defmodule SquareClient.Plans.Formatter do
       plans
       |> Enum.reject(fn {key, _} -> key == "free" end)
       |> Enum.flat_map(fn {plan_key, plan_data} ->
-        build_variation_plans(plan_key, plan_data, plan_types, include_inactive, tier_types)
+        build_variation_plans(
+          plan_key,
+          plan_data,
+          plan_opts.plan_types,
+          plan_opts.include_inactive,
+          plan_opts.tier_types
+        )
       end)
 
     # Combine and filter nils
@@ -75,6 +90,7 @@ defmodule SquareClient.Plans.Formatter do
     * `opts` - Options including:
       * `:include_inactive` - Include inactive purchases (default: false)
   """
+  @spec get_one_time_purchases(atom(), String.t(), keyword()) :: [map()]
   def get_one_time_purchases(app, config_path \\ "square_plans.json", opts \\ []) do
     include_inactive = Keyword.get(opts, :include_inactive, false)
     config = load_full_config(app, config_path)
@@ -113,6 +129,7 @@ defmodule SquareClient.Plans.Formatter do
     * `config_path` - Path to config file (default: "square_plans.json")
     * `opts` - Options (see get_subscription_plans/3)
   """
+  @spec get_all_plans(atom(), String.t(), keyword()) :: [map()]
   def get_all_plans(app, config_path \\ "square_plans.json", opts \\ []) do
     subscription_plans = get_subscription_plans(app, config_path, opts)
     one_time_purchases = get_one_time_purchases(app, config_path, opts)
@@ -128,6 +145,7 @@ defmodule SquareClient.Plans.Formatter do
     * `config_path` - Path to config file (default: "square_plans.json")
     * `opts` - Options (see get_subscription_plans/3)
   """
+  @spec get_plan_by_id(atom(), String.t() | atom(), String.t(), keyword()) :: map() | nil
   def get_plan_by_id(app, plan_id, config_path \\ "square_plans.json", opts \\ []) do
     all_plans = get_all_plans(app, config_path, opts)
 
@@ -151,6 +169,7 @@ defmodule SquareClient.Plans.Formatter do
       plans = get_all_plans(:my_app)
       marked = mark_recommended_plans(plans, :free, plan_types: MyApp.PlanTypes)
   """
+  @spec mark_recommended_plans([map()], atom() | String.t(), keyword()) :: [map()]
   def mark_recommended_plans(plans, current_plan_id, opts \\ []) do
     plan_types = Keyword.get(opts, :plan_types)
 
@@ -177,36 +196,26 @@ defmodule SquareClient.Plans.Formatter do
       * `:currency` - Currency code (default: "USD")
       * `:format` - :short or :long (default: :short)
   """
+  @spec format_price(number(), String.t() | nil, keyword()) :: String.t()
   def format_price(amount, cadence, opts \\ []) do
-    currency = Keyword.get(opts, :currency, "USD")
-    format = Keyword.get(opts, :format, :short)
-
-    dollars = amount / 100
-
-    price_str =
-      case currency do
-        "USD" -> "$#{format_amount(dollars)}"
-        "EUR" -> "€#{format_amount(dollars)}"
-        "GBP" -> "£#{format_amount(dollars)}"
-        _ -> "#{currency} #{format_amount(dollars)}"
-      end
-
-    cadence_str =
-      case {cadence, format} do
-        {"WEEKLY", :short} -> "/week"
-        {"WEEKLY", :long} -> " per week"
-        {"MONTHLY", :short} -> "/mo"
-        {"MONTHLY", :long} -> " per month"
-        {"ANNUAL", :short} -> "/yr"
-        {"ANNUAL", :long} -> " per year"
-        {"DAILY", :short} -> "/day"
-        {"DAILY", :long} -> " per day"
-        {nil, _} -> ""
-        _ -> ""
-      end
-
-    price_str <> cadence_str
+    price_str = format_currency_amount(amount / 100, Keyword.get(opts, :currency, "USD"))
+    price_str <> cadence_suffix(cadence, Keyword.get(opts, :format, :short))
   end
+
+  defp format_currency_amount(dollars, "USD"), do: "$#{format_amount(dollars)}"
+  defp format_currency_amount(dollars, "EUR"), do: "€#{format_amount(dollars)}"
+  defp format_currency_amount(dollars, "GBP"), do: "£#{format_amount(dollars)}"
+  defp format_currency_amount(dollars, currency), do: "#{currency} #{format_amount(dollars)}"
+
+  defp cadence_suffix("WEEKLY", :short), do: "/week"
+  defp cadence_suffix("WEEKLY", :long), do: " per week"
+  defp cadence_suffix("MONTHLY", :short), do: "/mo"
+  defp cadence_suffix("MONTHLY", :long), do: " per month"
+  defp cadence_suffix("ANNUAL", :short), do: "/yr"
+  defp cadence_suffix("ANNUAL", :long), do: " per year"
+  defp cadence_suffix("DAILY", :short), do: "/day"
+  defp cadence_suffix("DAILY", :long), do: " per day"
+  defp cadence_suffix(_cadence, _format), do: ""
 
   # Private functions
 
@@ -233,32 +242,38 @@ defmodule SquareClient.Plans.Formatter do
   going through the full JSON load. `tier_types` is `:all` to bypass filtering,
   or a list like `["personal"]` / `["team"]` to restrict the output.
   """
+  @spec build_variation_plans(
+          String.t(),
+          map(),
+          module() | nil,
+          boolean(),
+          :all | [String.t()]
+        ) :: [map()]
   def build_variation_plans(plan_key, plan_data, plan_types, include_inactive, tier_types \\ :all) do
-    variations = plan_data["variations"] || %{}
-
-    variations
+    (plan_data["variations"] || %{})
     |> maybe_filter_active(include_inactive)
     |> maybe_filter_tier_types(tier_types)
     |> Enum.map(fn {var_key, variation} ->
-      plan_atom = build_plan_atom(plan_key, var_key, plan_types)
-
-      %{
-        id: plan_atom,
-        name: build_plan_name(plan_data["name"], variation["name"], var_key),
-        price: variation["price"] || format_price(variation["amount"], variation["cadence"]),
-        price_cents: variation["price_cents"] || variation["amount"],
-        features: variation["features"] || plan_data["features"] || default_premium_features(),
-        type: :subscription,
-        tier_type: variation["tier_type"] || "personal",
-        auto_renews: variation["auto_renews"] != false,
-        billing_notice:
-          variation["billing_notice"] || default_billing_notice(variation["cadence"]),
-        cadence: variation["cadence"],
-        variation_id: variation["variation_id"],
-        base_plan_id: plan_data["base_plan_id"],
-        active: variation["active"] != false
-      }
+      variation_plan(plan_key, plan_data, plan_types, var_key, variation)
     end)
+  end
+
+  defp variation_plan(plan_key, plan_data, plan_types, var_key, variation) do
+    %{
+      id: build_plan_atom(plan_key, var_key, plan_types),
+      name: build_plan_name(plan_data["name"], variation["name"], var_key),
+      price: variation["price"] || format_price(variation["amount"], variation["cadence"]),
+      price_cents: variation["price_cents"] || variation["amount"],
+      features: variation["features"] || plan_data["features"] || default_premium_features(),
+      type: :subscription,
+      tier_type: variation["tier_type"] || "personal",
+      auto_renews: variation["auto_renews"] != false,
+      billing_notice: variation["billing_notice"] || default_billing_notice(variation["cadence"]),
+      cadence: variation["cadence"],
+      variation_id: variation["variation_id"],
+      base_plan_id: plan_data["base_plan_id"],
+      active: variation["active"] != false
+    }
   end
 
   defp maybe_filter_active(items, true), do: items

@@ -41,6 +41,7 @@ defmodule SquareClient.SubscriptionAuth do
     * `:redirect_to` - Path to redirect to if not subscribed (default: "/subscription")
     * `:message` - Flash message to show (optional)
   """
+  @spec require_premium_subscription(Plug.Conn.t(), keyword()) :: Plug.Conn.t()
   def require_premium_subscription(conn, opts) do
     payments_module = Keyword.fetch!(opts, :payments_module)
     redirect_path = Keyword.get(opts, :redirect_to, "/subscription")
@@ -67,21 +68,20 @@ defmodule SquareClient.SubscriptionAuth do
     * `:redirect_to` - Path to redirect to if not subscribed (default: "/subscription")
     * `:message` - Flash message to show (optional)
   """
+  @spec require_specific_plan(Plug.Conn.t(), keyword()) :: Plug.Conn.t()
   def require_specific_plan(conn, opts) do
     payments_module = Keyword.fetch!(opts, :payments_module)
     required_plan = Keyword.fetch!(opts, :plan)
-    redirect_path = Keyword.get(opts, :redirect_to, "/subscription")
-    message = Keyword.get(opts, :message, "This feature requires the #{required_plan} plan")
-
     user = conn.assigns[:current_user] || get_in(conn.assigns, [:current_scope, :user])
 
     if user && payments_module.has_plan?(user, required_plan) do
       conn
     else
-      conn
-      |> put_flash_if_available(:error, message)
-      |> redirect_if_available(to: redirect_path)
-      |> halt()
+      deny_access(
+        conn,
+        Keyword.get(opts, :message, "This feature requires the #{required_plan} plan"),
+        Keyword.get(opts, :redirect_to, "/subscription")
+      )
     end
   end
 
@@ -96,21 +96,20 @@ defmodule SquareClient.SubscriptionAuth do
     * `:redirect_to` - Path to redirect to if not subscribed (default: "/subscription")
     * `:message` - Flash message to show (optional)
   """
+  @spec require_feature(Plug.Conn.t(), keyword()) :: Plug.Conn.t()
   def require_feature(conn, opts) do
     payments_module = Keyword.fetch!(opts, :payments_module)
     required_feature = Keyword.fetch!(opts, :feature)
-    redirect_path = Keyword.get(opts, :redirect_to, "/subscription")
-    message = Keyword.get(opts, :message, "This feature requires an upgraded subscription")
-
     user = conn.assigns[:current_user] || get_in(conn.assigns, [:current_scope, :user])
 
     if user && payments_module.has_feature?(user, required_feature) do
       conn
     else
-      conn
-      |> put_flash_if_available(:error, message)
-      |> redirect_if_available(to: redirect_path)
-      |> halt()
+      deny_access(
+        conn,
+        Keyword.get(opts, :message, "This feature requires an upgraded subscription"),
+        Keyword.get(opts, :redirect_to, "/subscription")
+      )
     end
   end
 
@@ -121,6 +120,7 @@ defmodule SquareClient.SubscriptionAuth do
     * `:payments_module` - The payments context module (required)
     * `:message` - Error message to return (optional)
   """
+  @spec require_api_access(Plug.Conn.t(), keyword()) :: Plug.Conn.t()
   def require_api_access(conn, opts) do
     payments_module = Keyword.fetch!(opts, :payments_module)
     message = Keyword.get(opts, :message, "API access requires premium subscription")
@@ -151,6 +151,7 @@ defmodule SquareClient.SubscriptionAuth do
   Options:
     * `:payments_module` - The payments context module (required)
   """
+  @spec assign_subscription_status(Plug.Conn.t(), keyword()) :: Plug.Conn.t()
   def assign_subscription_status(conn, opts) do
     payments_module = Keyword.fetch!(opts, :payments_module)
     user = conn.assigns[:current_user] || get_in(conn.assigns, [:current_scope, :user])
@@ -175,6 +176,9 @@ defmodule SquareClient.SubscriptionAuth do
 
   Returns `{:ok, subscription}` or `{:error, :subscription_required}`
   """
+  @spec check_subscription(term(), module(), String.t() | nil) ::
+          {:ok, term()}
+          | {:error, :not_authenticated | :wrong_plan | :subscription_required}
   def check_subscription(user, payments_module, required_plan \\ nil) do
     cond do
       is_nil(user) ->
@@ -189,6 +193,13 @@ defmodule SquareClient.SubscriptionAuth do
       true ->
         {:ok, payments_module.get_active_subscription(user)}
     end
+  end
+
+  defp deny_access(conn, message, redirect_path) do
+    conn
+    |> put_flash_if_available(:error, message)
+    |> redirect_if_available(to: redirect_path)
+    |> halt()
   end
 
   # Helper functions to handle Phoenix.Controller availability

@@ -56,6 +56,8 @@ defmodule SquareClient.Catalog do
       })
       SquareClient.Catalog.create_base_subscription_plan(plan)
   """
+  @spec create_base_subscription_plan(BasePlan.t() | map()) ::
+          {:ok, map()} | {:error, term()}
   def create_base_subscription_plan(%BasePlan{} = plan) do
     object = BasePlan.to_square_object(plan)
     do_create_base_plan(object)
@@ -109,6 +111,7 @@ defmodule SquareClient.Catalog do
       })
       SquareClient.Catalog.create_plan_variation(variation)
   """
+  @spec create_plan_variation(PlanVariation.t() | map()) :: {:ok, map()} | {:error, term()}
   def create_plan_variation(%PlanVariation{} = variation) do
     object = PlanVariation.to_square_object(variation)
     do_create_plan_variation(object)
@@ -142,6 +145,7 @@ defmodule SquareClient.Catalog do
   @doc """
   List all subscription plans in the catalog.
   """
+  @spec list_subscription_plans() :: {:ok, [map()]} | {:error, term()}
   def list_subscription_plans do
     "#{api_url()}/catalog/list"
     |> Req.get(
@@ -159,6 +163,7 @@ defmodule SquareClient.Catalog do
   @doc """
   List all subscription plan variations in the catalog.
   """
+  @spec list_plan_variations() :: {:ok, [map()]} | {:error, term()}
   def list_plan_variations do
     "#{api_url()}/catalog/list"
     |> Req.get(
@@ -176,6 +181,7 @@ defmodule SquareClient.Catalog do
   @doc """
   Get a specific catalog object by ID.
   """
+  @spec get(String.t()) :: {:ok, map() | nil} | {:error, term()}
   def get(object_id) do
     "#{api_url()}/catalog/object/#{object_id}"
     |> Req.get(
@@ -192,6 +198,7 @@ defmodule SquareClient.Catalog do
   @doc """
   Delete a catalog object.
   """
+  @spec delete(String.t()) :: {:ok, :deleted} | {:error, term()}
   def delete(object_id) do
     "#{api_url()}/catalog/object/#{object_id}"
     |> Req.delete(
@@ -206,11 +213,11 @@ defmodule SquareClient.Catalog do
   end
 
   # Alias for consistency with Square API naming
+  @spec delete_catalog_object(String.t()) :: {:ok, :deleted} | {:error, term()}
   def delete_catalog_object(object_id), do: delete(object_id)
 
   defp generate_idempotency_key do
-    :crypto.strong_rand_bytes(16)
-    |> Base.encode16(case: :lower)
+    Base.encode16(:crypto.strong_rand_bytes(16), case: :lower)
   end
 
   defp parse_error(body) when is_map(body) do

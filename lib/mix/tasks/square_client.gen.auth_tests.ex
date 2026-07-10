@@ -19,6 +19,7 @@ defmodule Mix.Tasks.SquareClient.Gen.AuthTests do
 
   @shortdoc "Generates tests for subscription authentication helpers"
 
+  @spec run([String.t()]) :: :ok
   def run(_args) do
     app_name = Mix.Project.config()[:app]
     module_prefix = app_name |> Atom.to_string() |> Macro.camelize()

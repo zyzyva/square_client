@@ -51,8 +51,10 @@ defmodule SquareClient.WebhookPlug do
   import Plug.Conn
   require Logger
 
+  @spec init(term()) :: term()
   def init(opts), do: opts
 
+  @spec call(Plug.Conn.t(), term()) :: Plug.Conn.t()
   def call(conn, _opts) do
     with {:ok, body} <- read_request_body(conn),
          {:ok, signature} <- get_signature(conn),
@@ -77,8 +79,7 @@ defmodule SquareClient.WebhookPlug do
   end
 
   defp get_signature(conn) do
-    get_req_header(conn, "x-square-hmacsha256-signature")
-    |> handle_signature_header()
+    handle_signature_header(get_req_header(conn, "x-square-hmacsha256-signature"))
   end
 
   defp handle_signature_header([signature]) when is_binary(signature), do: {:ok, signature}

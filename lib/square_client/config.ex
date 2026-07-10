@@ -92,6 +92,7 @@ defmodule SquareClient.Config do
 
   Returns :ok or raises RuntimeError with helpful message.
   """
+  @spec validate_runtime!() :: :ok
   def validate_runtime! do
     errors =
       []
@@ -165,6 +166,7 @@ defmodule SquareClient.Config do
 
   Therefore, you must explicitly configure `api_url` in your config files.
   """
+  @spec api_url!() :: String.t()
   def api_url! do
     Application.get_env(:square_client, :api_url) ||
       auto_detect_api_url() ||
@@ -194,6 +196,7 @@ defmodule SquareClient.Config do
 
   Returns the token or raises with a helpful error message.
   """
+  @spec access_token!() :: String.t()
   def access_token! do
     Application.get_env(:square_client, :access_token) ||
       System.get_env("SQUARE_ACCESS_TOKEN") ||
@@ -212,6 +215,7 @@ defmodule SquareClient.Config do
 
   Returns the location ID or raises with a helpful error message.
   """
+  @spec location_id!() :: String.t()
   def location_id! do
     Application.get_env(:square_client, :location_id) ||
       System.get_env("SQUARE_LOCATION_ID") ||
@@ -230,13 +234,13 @@ defmodule SquareClient.Config do
 
   Returns {:ok, config} or {:error, reasons}.
   """
+  @spec check() :: {:ok, map()} | {:error, [String.t()]}
   def check do
     with {:ok, api_url} <- check_api_url(),
          {:ok, access_token} <- check_access_token(),
          {:ok, location_id} <- check_location_id() do
       {:ok, %{api_url: api_url, access_token: access_token, location_id: location_id}}
     else
-      {:error, reasons} when is_list(reasons) -> {:error, reasons}
       {:error, reason} -> {:error, [reason]}
     end
   end

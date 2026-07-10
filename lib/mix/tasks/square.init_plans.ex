@@ -25,6 +25,7 @@ defmodule Mix.Tasks.Square.InitPlans do
     config: :string
   ]
 
+  @spec run([String.t()]) :: :ok
   def run(args) do
     {opts, _, _} = OptionParser.parse(args, switches: @switches)
 
