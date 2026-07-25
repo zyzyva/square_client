@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Production deployments now correctly use production plan IDs and API URL automatically**
 - **Fixed issue where sandbox plan IDs were used in production when `SQUARE_ENVIRONMENT` was not explicitly set**
 - Plan variations with a missing, nil, or empty-string currency now default to USD instead of sending a null currency that Square rejects
+- `mix square.setup_plans` and `mix square.setup_production` now validate the entire plan definition (plan name; each active variation's name, cadence, and amount) before making any Square API call, and create nothing if anything is invalid. A mid-run Square API failure now stops the run, reports exactly which objects were created with their Square IDs, points at `mix square.cleanup_plans`, and exits with a failure status instead of printing a success banner
 
 ## [0.1.0] - 2025-01-26
 

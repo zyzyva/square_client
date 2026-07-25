@@ -25,6 +25,7 @@ defmodule Mix.Tasks.Square.SetupPlans do
   use Mix.Task
 
   alias SquareClient.{Plans, Catalog}
+  alias SquareClient.Plans.ProvisioningValidator
 
   @shortdoc "Create subscription plans in Square SANDBOX environment"
 
@@ -48,6 +49,8 @@ defmodule Mix.Tasks.Square.SetupPlans do
     plan_configs = Plans.get_plans(opts.app, opts.config_path)
 
     ensure_plans_configured!(plan_configs, opts)
+
+    validate_or_abort!(plan_configs)
 
     process_plans(opts.dry_run, plan_configs, opts)
 
@@ -80,12 +83,25 @@ defmodule Mix.Tasks.Square.SetupPlans do
 
   defp ensure_plans_configured!(_plan_configs, _opts), do: :ok
 
-  defp process_plans(false = _dry_run, plan_configs, opts) do
-    Enum.each(plan_configs, fn {plan_key, plan_config} ->
-      process_plan(plan_key, plan_config, opts)
-    end)
+  defp validate_or_abort!(plan_configs) do
+    case ProvisioningValidator.validate(plan_configs, "base_plan_id", "variation_id") do
+      :ok ->
+        :ok
 
-    IO.puts("\n✅ Sandbox setup complete!")
+      {:error, findings} ->
+        IO.puts("❌ Invalid plan definition:")
+        IO.puts(ProvisioningValidator.format_findings(findings))
+        IO.puts("\nNothing was created.")
+        Mix.raise("Provisioning aborted: invalid plan definition")
+    end
+  end
+
+  defp process_plans(false = _dry_run, plan_configs, opts) do
+    plan_configs
+    |> Enum.reduce_while({:ok, []}, fn {plan_key, plan_config}, {:ok, created} ->
+      process_plan(plan_key, plan_config, opts, created)
+    end)
+    |> finish_run()
   end
 
   defp process_plans(true = _dry_run, plan_configs, _opts) do
@@ -98,21 +114,42 @@ defmodule Mix.Tasks.Square.SetupPlans do
     IO.puts("\n📋 Dry run complete. Run without --dry-run to apply changes.")
   end
 
-  defp process_plan(plan_key, plan_config, opts) do
-    IO.puts("📦 Processing plan: #{plan_config["name"]}")
-
-    # Step 1: Create or update base plan
-    base_plan_id = ensure_base_plan(opts.app, plan_key, plan_config, opts.config_path)
-
-    # Step 2: Create or update variations
-    maybe_create_variations(base_plan_id, plan_key, plan_config, opts)
-
-    IO.puts("")
+  defp finish_run({:ok, _created}) do
+    IO.puts("\n✅ Sandbox setup complete!")
   end
 
-  defp maybe_create_variations(base_plan_id, plan_key, plan_config, opts) do
-    if base_plan_id do
-      create_variations(opts, plan_key, plan_config, base_plan_id)
+  defp finish_run({:error, created}) do
+    report_stranded_objects(created)
+    Mix.raise("Provisioning aborted: Square API call failed")
+  end
+
+  defp report_stranded_objects([]) do
+    IO.puts("\n❌ Provisioning failed before creating any objects. Nothing to clean up.")
+  end
+
+  defp report_stranded_objects(created) do
+    IO.puts(
+      "\n❌ Provisioning failed. The following objects were created in this run and are now stranded in Square:"
+    )
+
+    created
+    |> Enum.reverse()
+    |> Enum.each(fn {label, id} -> IO.puts("   - #{label}: #{id}") end)
+
+    IO.puts("\nRun `mix square.cleanup_plans` to identify and address stranded objects.")
+  end
+
+  defp process_plan(plan_key, plan_config, opts, created) do
+    IO.puts("📦 Processing plan: #{plan_config["name"]}")
+
+    with {:ok, base_plan_id, created} <-
+           ensure_base_plan(opts.app, plan_key, plan_config, opts.config_path, created),
+         {:ok, created} <-
+           create_variations(opts, plan_key, plan_config, base_plan_id, created) do
+      IO.puts("")
+      {:cont, {:ok, created}}
+    else
+      {:error, created} -> {:halt, {:error, created}}
     end
   end
 
@@ -163,11 +200,11 @@ defmodule Mix.Tasks.Square.SetupPlans do
     String.to_atom(app_string)
   end
 
-  defp ensure_base_plan(app, plan_key, plan_config, config_path) do
+  defp ensure_base_plan(app, plan_key, plan_config, config_path, created) do
     # Check for sandbox ID (after environment transformation)
     if plan_config["base_plan_id"] do
       IO.puts("   ✓ Sandbox base plan already exists: #{plan_config["base_plan_id"]}")
-      plan_config["base_plan_id"]
+      {:ok, plan_config["base_plan_id"], created}
     else
       IO.puts("   📝 Creating base plan...")
 
@@ -184,16 +221,16 @@ defmodule Mix.Tasks.Square.SetupPlans do
           # Save to config
           Plans.update_base_plan_id(app, plan_key, result.plan_id, config_path)
 
-          result.plan_id
+          {:ok, result.plan_id, [{"base plan (#{prefixed_name})", result.plan_id} | created]}
 
         {:error, reason} ->
           IO.puts("   ❌ Failed to create base plan: #{inspect(reason)}")
-          nil
+          {:error, created}
       end
     end
   end
 
-  defp create_variations(opts, plan_key, plan_config, base_plan_id) do
+  defp create_variations(opts, plan_key, plan_config, base_plan_id, created) do
     ctx = %{
       app: opts.app,
       config_path: opts.config_path,
@@ -201,12 +238,13 @@ defmodule Mix.Tasks.Square.SetupPlans do
       base_plan_id: base_plan_id
     }
 
-    Enum.each(plan_config["variations"] || %{}, fn {variation_key, variation_config} ->
-      process_variation(ctx, variation_key, variation_config)
+    Enum.reduce_while(plan_config["variations"] || %{}, {:ok, created}, fn
+      {variation_key, variation_config}, {:ok, created} ->
+        process_variation(ctx, variation_key, variation_config, created)
     end)
   end
 
-  defp process_variation(ctx, variation_key, variation_config) do
+  defp process_variation(ctx, variation_key, variation_config, created) do
     variation_id = variation_config["variation_id"] || variation_config["sandbox_variation_id"]
 
     dispatch_variation(
@@ -214,34 +252,38 @@ defmodule Mix.Tasks.Square.SetupPlans do
       variation_config["active"] != false,
       ctx,
       variation_key,
-      variation_config
+      variation_config,
+      created
     )
   end
 
-  # Has ID and is active - ensure it's active in Square
-  defp dispatch_variation(variation_id, true, _ctx, _variation_key, variation_config)
+  # Has ID and is active - ensure it's active in Square (not a create call, never halts)
+  defp dispatch_variation(variation_id, true, _ctx, _variation_key, variation_config, created)
        when not is_nil(variation_id) do
     ensure_variation_active(variation_id, variation_config["name"])
+    {:cont, {:ok, created}}
   end
 
-  # Has ID but inactive - ensure it's deactivated in Square
-  defp dispatch_variation(variation_id, false, _ctx, _variation_key, variation_config)
+  # Has ID but inactive - ensure it's deactivated in Square (not a create call, never halts)
+  defp dispatch_variation(variation_id, false, _ctx, _variation_key, variation_config, created)
        when not is_nil(variation_id) do
     ensure_variation_inactive(variation_id, variation_config["name"])
+    {:cont, {:ok, created}}
   end
 
   # No ID but active - create it
-  defp dispatch_variation(nil, true, ctx, variation_key, variation_config) do
+  defp dispatch_variation(nil, true, ctx, variation_key, variation_config, created) do
     IO.puts("   📝 Creating variation: #{variation_config["name"]}")
-    create_sandbox_variation(ctx, variation_key, variation_config)
+    create_sandbox_variation(ctx, variation_key, variation_config, created)
   end
 
   # No ID and inactive - skip
-  defp dispatch_variation(nil, false, _ctx, _variation_key, variation_config) do
+  defp dispatch_variation(nil, false, _ctx, _variation_key, variation_config, created) do
     IO.puts("   ⏭️  Skipping inactive variation: #{variation_config["name"]}")
+    {:cont, {:ok, created}}
   end
 
-  defp create_sandbox_variation(ctx, variation_key, variation_config) do
+  defp create_sandbox_variation(ctx, variation_key, variation_config, created) do
     case Catalog.create_plan_variation(%{
            base_plan_id: ctx.base_plan_id,
            name: variation_config["name"],
@@ -261,8 +303,12 @@ defmodule Mix.Tasks.Square.SetupPlans do
           ctx.config_path
         )
 
+        label = "variation (#{variation_config["name"]})"
+        {:cont, {:ok, [{label, result.variation_id} | created]}}
+
       {:error, reason} ->
         IO.puts("   ❌ Failed to create variation: #{inspect(reason)}")
+        {:halt, {:error, created}}
     end
   end
 

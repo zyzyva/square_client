@@ -40,6 +40,7 @@ defmodule Mix.Tasks.Square.SetupProduction do
   use Mix.Task
 
   alias SquareClient.Catalog
+  alias SquareClient.Plans.ProvisioningValidator
 
   @shortdoc "Create subscription plans in Square PRODUCTION environment"
 
@@ -59,6 +60,7 @@ defmodule Mix.Tasks.Square.SetupProduction do
     Mix.Task.run("app.start")
 
     print_production_header()
+    validate_or_abort!(opts)
     confirm_production(opts.dry_run)
 
     original_config = capture_original_config()
@@ -91,6 +93,25 @@ defmodule Mix.Tasks.Square.SetupProduction do
   end
 
   defp ensure_production_token!(_prod_token, _dry_run), do: :ok
+
+  defp validate_or_abort!(opts) do
+    plan_configs = load_raw_plans(opts.app, opts.config_path)
+
+    case ProvisioningValidator.validate(
+           plan_configs,
+           "production_base_plan_id",
+           "production_variation_id"
+         ) do
+      :ok ->
+        :ok
+
+      {:error, findings} ->
+        IO.puts("❌ Invalid plan definition:")
+        IO.puts(ProvisioningValidator.format_findings(findings))
+        IO.puts("\nNothing was created.")
+        Mix.raise("Provisioning aborted: invalid plan definition")
+    end
+  end
 
   defp print_production_header do
     IO.puts("🚨 PRODUCTION SETUP 🚨")
@@ -221,10 +242,14 @@ defmodule Mix.Tasks.Square.SetupProduction do
   defp create_or_report_dry_run(false = _dry_run, production_plans, opts) do
     IO.puts("\n🚀 Creating production plans...")
 
-    Enum.each(production_plans, fn {plan_key, plan_config} ->
-      process_production_plan(plan_key, plan_config, opts)
+    production_plans
+    |> Enum.reduce_while({:ok, []}, fn {plan_key, plan_config}, {:ok, created} ->
+      process_production_plan(plan_key, plan_config, opts, created)
     end)
+    |> finish_production_run(opts)
+  end
 
+  defp finish_production_run({:ok, _created}, opts) do
     IO.puts("\n✅ Production setup complete!")
     IO.puts("\n📝 Updated square_plans.json with production IDs")
     IO.puts("\n🔄 Syncing all plan status with Square...")
@@ -233,30 +258,95 @@ defmodule Mix.Tasks.Square.SetupProduction do
     sync_production_status(opts.app, updated_plan_configs, opts.config_path)
   end
 
-  defp process_production_plan(plan_key, plan_config, opts) do
-    IO.puts("\n📦 Processing: #{plan_config["name"]}")
-
-    production_base_id = resolve_production_base_id(plan_key, plan_config, opts)
-
-    maybe_create_production_variations(production_base_id, plan_key, plan_config, opts)
+  defp finish_production_run({:error, created}, _opts) do
+    report_stranded_objects(created)
+    Mix.raise("Provisioning aborted: Square API call failed")
   end
 
-  defp resolve_production_base_id(plan_key, plan_config, opts) do
+  defp report_stranded_objects([]) do
+    IO.puts("\n❌ Provisioning failed before creating any objects. Nothing to clean up.")
+  end
+
+  defp report_stranded_objects(created) do
+    IO.puts(
+      "\n❌ Provisioning failed. The following objects were created in this run and are now stranded in Square:"
+    )
+
+    created
+    |> Enum.reverse()
+    |> Enum.each(fn {label, id} -> IO.puts("   - #{label}: #{id}") end)
+
+    IO.puts("\nRun `mix square.cleanup_plans` to identify and address stranded objects.")
+  end
+
+  defp process_production_plan(plan_key, plan_config, opts, created) do
+    IO.puts("\n📦 Processing: #{plan_config["name"]}")
+
+    with {:ok, production_base_id, created} <-
+           resolve_production_base_id(plan_key, plan_config, opts, created),
+         {:ok, created} <-
+           maybe_create_production_variations(
+             production_base_id,
+             plan_key,
+             plan_config,
+             opts,
+             created
+           ) do
+      {:cont, {:ok, created}}
+    else
+      {:error, created} -> {:halt, {:error, created}}
+    end
+  end
+
+  defp resolve_production_base_id(plan_key, plan_config, opts, created) do
     if plan_config["production_base_plan_id"] do
       IO.puts(
         "  ✓ Using existing production base plan: #{plan_config["production_base_plan_id"]}"
       )
 
-      plan_config["production_base_plan_id"]
+      {:ok, plan_config["production_base_plan_id"], created}
     else
-      create_production_base_plan(opts.app, plan_key, plan_config, opts.config_path)
+      create_production_base_plan(opts.app, plan_key, plan_config, opts.config_path, created)
     end
   end
 
-  defp maybe_create_production_variations(production_base_id, plan_key, plan_config, opts) do
-    if production_base_id && plan_config["variations"] do
-      create_production_variations(opts, plan_key, plan_config, production_base_id)
-    end
+  defp maybe_create_production_variations(
+         production_base_id,
+         plan_key,
+         plan_config,
+         opts,
+         created
+       ) do
+    dispatch_maybe_create_production_variations(
+      plan_config["variations"],
+      production_base_id,
+      plan_key,
+      plan_config,
+      opts,
+      created
+    )
+  end
+
+  defp dispatch_maybe_create_production_variations(
+         nil,
+         _base_id,
+         _plan_key,
+         _plan_config,
+         _opts,
+         created
+       ) do
+    {:ok, created}
+  end
+
+  defp dispatch_maybe_create_production_variations(
+         _variations,
+         production_base_id,
+         plan_key,
+         plan_config,
+         opts,
+         created
+       ) do
+    create_production_variations(opts, plan_key, plan_config, production_base_id, created)
   end
 
   defp get_app(nil) do
@@ -410,7 +500,7 @@ defmodule Mix.Tasks.Square.SetupProduction do
     IO.puts("      Run without existing IDs to create this variation")
   end
 
-  defp create_production_base_plan(app, plan_key, plan_config, config_path) do
+  defp create_production_base_plan(app, plan_key, plan_config, config_path, created) do
     IO.puts("  📝 Creating production base plan...")
 
     # Add app prefix to plan name for clarity in Square Dashboard
@@ -426,15 +516,15 @@ defmodule Mix.Tasks.Square.SetupProduction do
         # Update the production ID field in config
         update_production_base_plan_id(app, plan_key, result.plan_id, config_path)
 
-        result.plan_id
+        {:ok, result.plan_id, [{"base plan (#{prefixed_name})", result.plan_id} | created]}
 
       {:error, reason} ->
         IO.puts("  ❌ Failed to create base plan: #{inspect(reason)}")
-        nil
+        {:error, created}
     end
   end
 
-  defp create_production_variations(opts, plan_key, plan_config, base_plan_id) do
+  defp create_production_variations(opts, plan_key, plan_config, base_plan_id, created) do
     ctx = %{
       app: opts.app,
       config_path: opts.config_path,
@@ -442,45 +532,64 @@ defmodule Mix.Tasks.Square.SetupProduction do
       base_plan_id: base_plan_id
     }
 
-    Enum.each(plan_config["variations"] || %{}, fn {variation_key, variation_config} ->
-      process_production_variation(ctx, variation_key, variation_config)
+    Enum.reduce_while(plan_config["variations"] || %{}, {:ok, created}, fn
+      {variation_key, variation_config}, {:ok, created} ->
+        process_production_variation(ctx, variation_key, variation_config, created)
     end)
   end
 
-  defp process_production_variation(ctx, variation_key, variation_config) do
+  defp process_production_variation(ctx, variation_key, variation_config, created) do
     dispatch_production_variation(
       variation_config["production_variation_id"],
       variation_config["active"] != false,
       ctx,
       variation_key,
-      variation_config
+      variation_config,
+      created
     )
   end
 
-  # Has ID and is active - ensure it's active in Square
-  defp dispatch_production_variation(variation_id, true, _ctx, _variation_key, variation_config)
+  # Has ID and is active - ensure it's active in Square (not a create call, never halts)
+  defp dispatch_production_variation(
+         variation_id,
+         true,
+         _ctx,
+         _variation_key,
+         variation_config,
+         created
+       )
        when not is_nil(variation_id) do
     ensure_production_variation_active(variation_id, variation_config["name"])
+    {:cont, {:ok, created}}
   end
 
-  # Has ID but inactive - ensure it's deactivated in Square
-  defp dispatch_production_variation(variation_id, false, _ctx, _variation_key, variation_config)
+  # Has ID but inactive - ensure it's deactivated in Square (not a create call, never halts)
+  defp dispatch_production_variation(
+         variation_id,
+         false,
+         _ctx,
+         _variation_key,
+         variation_config,
+         created
+       )
        when not is_nil(variation_id) do
     ensure_production_variation_inactive(variation_id, variation_config["name"])
+    {:cont, {:ok, created}}
   end
 
   # No ID but active - create it
-  defp dispatch_production_variation(nil, true, ctx, variation_key, variation_config) do
+  defp dispatch_production_variation(nil, true, ctx, variation_key, variation_config, created) do
     IO.puts("  📝 Creating production variation: #{variation_config["name"]}")
-    create_production_variation(ctx, variation_key, variation_config)
+    create_production_variation(ctx, variation_key, variation_config, created)
   end
 
   # No ID and inactive - skip
-  defp dispatch_production_variation(nil, false, _ctx, _variation_key, variation_config) do
+  defp dispatch_production_variation(nil, false, _ctx, _variation_key, variation_config, created) do
     IO.puts("  ⏭️  Skipping inactive variation: #{variation_config["name"]}")
+    {:cont, {:ok, created}}
   end
 
-  defp create_production_variation(ctx, variation_key, variation_config) do
+  defp create_production_variation(ctx, variation_key, variation_config, created) do
     case Catalog.create_plan_variation(%{
            base_plan_id: ctx.base_plan_id,
            name: variation_config["name"],
@@ -494,8 +603,12 @@ defmodule Mix.Tasks.Square.SetupProduction do
         # Update the production ID field in config
         update_production_variation_id(ctx, variation_key, result.variation_id)
 
+        label = "variation (#{variation_config["name"]})"
+        {:cont, {:ok, [{label, result.variation_id} | created]}}
+
       {:error, reason} ->
         IO.puts("  ❌ Failed to create variation: #{inspect(reason)}")
+        {:halt, {:error, created}}
     end
   end
 
