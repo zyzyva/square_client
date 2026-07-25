@@ -831,6 +831,29 @@ plans = [
 ]
 ```
 
+### Hosted Checkout Links
+
+Create a Square-hosted checkout page for a subscription plan variation and send the buyer a link — no card form to build.
+
+```elixir
+{:ok, %{checkout_url: url, payment_link_id: id}} =
+  SquareClient.Checkout.create_subscription_link(:my_app, "premium", "monthly",
+    location_id: "LOC_ABC123",
+    redirect_url: "https://myapp.com/checkout/complete"
+  )
+```
+
+Inputs:
+- `app` - your application atom
+- `plan_key` / `variation_key` - identifiers from your JSON plan catalog
+- `:location_id` (required) - the Square location whose name is rendered as the checkout page heading
+- `:redirect_url` (optional) - where Square sends the buyer after payment
+- `:config_path` (optional) - defaults to `"square_plans.json"`
+
+Two design constraints are load-bearing:
+1. **Price, currency, and product name always come from the JSON catalog.** There is no option to pass an amount, currency, or display name — Square rejects a payment link whose price disagrees with the plan variation, and a caller-supplied amount would be a second place for the number to live and drift.
+2. **The location identifier is always required and validated before any API call.** The library never lists locations and picks one for you — a wrong location renders the wrong merchant name on the checkout page.
+
 ### Subscription Management
 
 The library provides complete subscription management infrastructure that you can drop into your app.

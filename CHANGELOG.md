@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Documentation for choosing between one-time purchases and subscriptions
 - **Automatic environment detection from `config_env()` (Mix environment)**
 - **Automatic API URL selection based on environment**
+- Hosted subscription checkout links via `SquareClient.Checkout` (catalog-sourced pricing, explicit location required)
 
 ### Changed
 - Enhanced README with webhook integration guide and one-time payment examples
