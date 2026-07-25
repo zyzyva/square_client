@@ -57,7 +57,7 @@ defmodule Mix.Tasks.Square.SetupProduction do
 
     ensure_production_token!(prod_token, opts.dry_run)
 
-    Mix.Task.run("app.start")
+    SquareClient.TaskBoot.ensure_runtime!()
 
     print_production_header()
     validate_or_abort!(opts)

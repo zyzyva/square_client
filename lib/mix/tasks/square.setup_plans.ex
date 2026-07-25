@@ -39,7 +39,7 @@ defmodule Mix.Tasks.Square.SetupPlans do
   def run(args) do
     opts = parse_options(args)
 
-    Mix.Task.run("app.start")
+    SquareClient.TaskBoot.ensure_runtime!()
 
     IO.puts("Setting up Square SANDBOX subscription plans...")
     IO.puts("Using Square's recommended pattern: base plans with variations\n")

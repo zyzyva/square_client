@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Environment detection now auto-detects from `config_env()` - no configuration needed**
 - **API URL auto-selected: production when `MIX_ENV=prod`, sandbox otherwise**
 - **Updated documentation - users no longer need to configure `api_url` or `SQUARE_ENVIRONMENT`**
+- Square mix tasks (`init_plans`, `list_plans`, `setup_plans`, `setup_production`, `cleanup_plans`) no longer boot the consuming application's supervision tree; they load code and configuration only, so task output is no longer buried under app log noise and no duplicate workers (e.g. Oban) are started alongside a running dev server
 
 ### Fixed
 - Test output now clean with proper log capture

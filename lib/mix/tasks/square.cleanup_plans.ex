@@ -43,7 +43,7 @@ defmodule Mix.Tasks.Square.CleanupPlans do
   def run(args) do
     opts = parse_options(args)
 
-    Mix.Task.run("app.start")
+    SquareClient.TaskBoot.ensure_runtime!()
 
     print_cleanup_header()
 

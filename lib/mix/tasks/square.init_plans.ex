@@ -32,7 +32,7 @@ defmodule Mix.Tasks.Square.InitPlans do
     app = get_app(opts[:app])
     config_path = opts[:config] || "square_plans.json"
 
-    Mix.Task.run("app.start")
+    SquareClient.TaskBoot.ensure_runtime!()
 
     IO.puts("Initializing Square plans configuration...")
 

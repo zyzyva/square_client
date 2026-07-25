@@ -31,7 +31,7 @@ defmodule Mix.Tasks.Square.ListPlans do
   def run(args) do
     opts = parse_options(args)
 
-    Mix.Task.run("app.start")
+    SquareClient.TaskBoot.ensure_runtime!()
 
     IO.puts("Square Subscription Plans Configuration")
     IO.puts(String.duplicate("=", 50))
