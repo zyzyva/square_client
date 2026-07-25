@@ -52,6 +52,82 @@ defmodule SquareClient.Catalog.PlanVariationTest do
     end
   end
 
+  describe "new/1 currency normalization" do
+    test "currency absent defaults struct and Square object currency to USD" do
+      attrs = %{base_plan_id: "PLAN123", name: "Monthly", cadence: "MONTHLY", amount: 999}
+
+      variation = PlanVariation.new(attrs)
+
+      assert variation.currency == "USD"
+
+      assert %{
+               subscription_plan_variation_data: %{
+                 phases: [%{pricing: %{price_money: %{currency: "USD"}}}]
+               }
+             } = PlanVariation.to_square_object(variation)
+    end
+
+    test "currency nil defaults struct and Square object currency to USD" do
+      attrs = %{
+        base_plan_id: "PLAN123",
+        name: "Monthly",
+        cadence: "MONTHLY",
+        amount: 999,
+        currency: nil
+      }
+
+      variation = PlanVariation.new(attrs)
+
+      assert variation.currency == "USD"
+
+      assert %{
+               subscription_plan_variation_data: %{
+                 phases: [%{pricing: %{price_money: %{currency: "USD"}}}]
+               }
+             } = PlanVariation.to_square_object(variation)
+    end
+
+    test "currency empty string defaults struct and Square object currency to USD" do
+      attrs = %{
+        base_plan_id: "PLAN123",
+        name: "Monthly",
+        cadence: "MONTHLY",
+        amount: 999,
+        currency: ""
+      }
+
+      variation = PlanVariation.new(attrs)
+
+      assert variation.currency == "USD"
+
+      assert %{
+               subscription_plan_variation_data: %{
+                 phases: [%{pricing: %{price_money: %{currency: "USD"}}}]
+               }
+             } = PlanVariation.to_square_object(variation)
+    end
+
+    test "explicit non-USD currency passes through unchanged to struct and Square object" do
+      attrs = %{
+        base_plan_id: "PLAN123",
+        name: "Monthly",
+        cadence: "MONTHLY",
+        amount: 999,
+        currency: "EUR"
+      }
+
+      variation = PlanVariation.new(attrs)
+
+      assert variation.currency == "EUR"
+
+      assert %{
+               subscription_plan_variation_data: %{
+                 phases: [%{pricing: %{price_money: %{currency: "EUR"}}}]
+               }
+             } = PlanVariation.to_square_object(variation)
+    end
+  end
+
   describe "to_square_object/1" do
     test "converts variation to Square API format" do
       variation = %PlanVariation{

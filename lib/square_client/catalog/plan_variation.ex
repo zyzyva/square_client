@@ -19,8 +19,15 @@ defmodule SquareClient.Catalog.PlanVariation do
   """
   @spec new(map()) :: t()
   def new(attrs) when is_map(attrs) do
-    struct(__MODULE__, Map.put_new(attrs, :currency, "USD"))
+    attrs
+    |> Map.put_new(:currency, "USD")
+    |> normalize_currency()
+    |> then(&struct(__MODULE__, &1))
   end
+
+  defp normalize_currency(%{currency: nil} = attrs), do: %{attrs | currency: "USD"}
+  defp normalize_currency(%{currency: ""} = attrs), do: %{attrs | currency: "USD"}
+  defp normalize_currency(attrs), do: attrs
 
   @doc """
   Converts the struct to Square API format.

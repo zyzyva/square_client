@@ -279,6 +279,167 @@ defmodule SquareClient.CatalogTest do
       assert result.variation_id == variation_id
       assert result.name == "Annual"
     end
+
+    test "defaults currency to USD when currency is nil", %{bypass: bypass} do
+      base_plan_id = "BASE_PLAN_NIL_CURRENCY"
+      variation_id = "VARIATION_NIL_CURRENCY"
+
+      Bypass.expect_once(bypass, "POST", "/v2/catalog/object", fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        request = JSON.decode!(body)
+
+        [phase] = request["object"]["subscription_plan_variation_data"]["phases"]
+        assert phase["pricing"]["price_money"]["currency"] == "USD"
+
+        response = %{
+          "catalog_object" => %{
+            "id" => variation_id,
+            "type" => "SUBSCRIPTION_PLAN_VARIATION",
+            "subscription_plan_variation_data" => %{
+              "subscription_plan_id" => base_plan_id,
+              "name" => "Monthly",
+              "phases" => [
+                %{
+                  "cadence" => "MONTHLY",
+                  "pricing" => %{
+                    "type" => "STATIC",
+                    "price_money" => %{"amount" => 999, "currency" => "USD"}
+                  }
+                }
+              ]
+            }
+          }
+        }
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, JSON.encode!(response))
+      end)
+
+      _log =
+        capture_log(fn ->
+          {:ok, result} =
+            Catalog.create_plan_variation(%{
+              base_plan_id: base_plan_id,
+              name: "Monthly",
+              cadence: "MONTHLY",
+              amount: 999,
+              currency: nil
+            })
+
+          send(self(), {:result, result})
+        end)
+
+      assert_received {:result, result}
+      assert result.variation_id == variation_id
+    end
+
+    test "defaults currency to USD when currency is absent", %{bypass: bypass} do
+      base_plan_id = "BASE_PLAN_ABSENT_CURRENCY"
+      variation_id = "VARIATION_ABSENT_CURRENCY"
+
+      Bypass.expect_once(bypass, "POST", "/v2/catalog/object", fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        request = JSON.decode!(body)
+
+        [phase] = request["object"]["subscription_plan_variation_data"]["phases"]
+        assert phase["pricing"]["price_money"]["currency"] == "USD"
+
+        response = %{
+          "catalog_object" => %{
+            "id" => variation_id,
+            "type" => "SUBSCRIPTION_PLAN_VARIATION",
+            "subscription_plan_variation_data" => %{
+              "subscription_plan_id" => base_plan_id,
+              "name" => "Monthly",
+              "phases" => [
+                %{
+                  "cadence" => "MONTHLY",
+                  "pricing" => %{
+                    "type" => "STATIC",
+                    "price_money" => %{"amount" => 999, "currency" => "USD"}
+                  }
+                }
+              ]
+            }
+          }
+        }
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, JSON.encode!(response))
+      end)
+
+      _log =
+        capture_log(fn ->
+          {:ok, result} =
+            Catalog.create_plan_variation(%{
+              base_plan_id: base_plan_id,
+              name: "Monthly",
+              cadence: "MONTHLY",
+              amount: 999
+            })
+
+          send(self(), {:result, result})
+        end)
+
+      assert_received {:result, result}
+      assert result.variation_id == variation_id
+    end
+
+    test "passes through an explicit non-USD currency unchanged", %{bypass: bypass} do
+      base_plan_id = "BASE_PLAN_EUR"
+      variation_id = "VARIATION_EUR"
+
+      Bypass.expect_once(bypass, "POST", "/v2/catalog/object", fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        request = JSON.decode!(body)
+
+        [phase] = request["object"]["subscription_plan_variation_data"]["phases"]
+        assert phase["pricing"]["price_money"]["currency"] == "EUR"
+
+        response = %{
+          "catalog_object" => %{
+            "id" => variation_id,
+            "type" => "SUBSCRIPTION_PLAN_VARIATION",
+            "subscription_plan_variation_data" => %{
+              "subscription_plan_id" => base_plan_id,
+              "name" => "Monthly",
+              "phases" => [
+                %{
+                  "cadence" => "MONTHLY",
+                  "pricing" => %{
+                    "type" => "STATIC",
+                    "price_money" => %{"amount" => 999, "currency" => "EUR"}
+                  }
+                }
+              ]
+            }
+          }
+        }
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, JSON.encode!(response))
+      end)
+
+      _log =
+        capture_log(fn ->
+          {:ok, result} =
+            Catalog.create_plan_variation(%{
+              base_plan_id: base_plan_id,
+              name: "Monthly",
+              cadence: "MONTHLY",
+              amount: 999,
+              currency: "EUR"
+            })
+
+          send(self(), {:result, result})
+        end)
+
+      assert_received {:result, result}
+      assert result.variation_id == variation_id
+    end
   end
 
   describe "list_subscription_plans/0" do

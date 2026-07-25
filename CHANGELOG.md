@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Test output now clean with proper log capture
 - **Production deployments now correctly use production plan IDs and API URL automatically**
 - **Fixed issue where sandbox plan IDs were used in production when `SQUARE_ENVIRONMENT` was not explicitly set**
+- Plan variations with a missing, nil, or empty-string currency now default to USD instead of sending a null currency that Square rejects
 
 ## [0.1.0] - 2025-01-26
 
