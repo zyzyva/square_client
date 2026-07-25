@@ -82,7 +82,17 @@ defmodule Mix.Tasks.Square.ProvisioningPreflightTest do
   end
 
   describe "mix square.setup_plans — invalid config aborts before any request (T-A)" do
-    test "reports the plan, variation, and field; makes zero HTTP requests", %{path: path} do
+    test "reports the plan, variation, and field; makes zero HTTP requests", %{
+      bypass: bypass,
+      path: path
+    } do
+      # Any request reaching Square fails the test outright: pre-flight validation
+      # must abort before a single API call. Bypass.stub is not verified, so a
+      # zero-request run passes; a stray request triggers the flunk.
+      Bypass.stub(bypass, "POST", "/v2/catalog/object", fn _conn ->
+        flunk("pre-flight validation must abort before any Square API request")
+      end)
+
       write_config!(path, %{
         "plans" => %{
           "premium" => %{
@@ -259,8 +269,14 @@ defmodule Mix.Tasks.Square.ProvisioningPreflightTest do
   end
 
   describe "mix square.setup_production — invalid config aborts before the confirmation prompt (T-D)" do
-    test "raises before reaching Press Enter to continue", %{path: path} do
+    test "raises before reaching Press Enter to continue", %{bypass: bypass, path: path} do
       System.put_env("SQUARE_PRODUCTION_ACCESS_TOKEN", "dummy_prod_token")
+
+      # Validation runs before the prompt AND before any create call, so no
+      # request may reach Square. A stray request fails the test.
+      Bypass.stub(bypass, "POST", "/v2/catalog/object", fn _conn ->
+        flunk("pre-flight validation must abort before any Square API request")
+      end)
 
       write_config!(path, %{
         "plans" => %{
