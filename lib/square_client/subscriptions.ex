@@ -224,6 +224,78 @@ defmodule SquareClient.Subscriptions do
   end
 
   @doc """
+  Search subscriptions by location, customer, and/or source. Auto-paginates
+  through every page Square returns and collects the full result list.
+
+  ## Options
+
+    * `:location_ids` - list of Square location ids
+    * `:customer_ids` - list of Square customer ids
+    * `:source_names` - list of source names
+
+  At least one filter should be supplied — Square's SearchSubscriptions
+  endpoint accepts an empty filter, but that means "every subscription on
+  the merchant account," which is rarely what a caller wants.
+
+  ## Examples
+
+      SquareClient.Subscriptions.search(location_ids: ["LOC_123"])
+      SquareClient.Subscriptions.search(customer_ids: ["CUST_123", "CUST_456"])
+  """
+  @spec search(keyword()) :: {:ok, [map()]} | {:error, term()}
+  def search(opts \\ []) do
+    filter =
+      %{}
+      |> maybe_put_filter("location_ids", Keyword.get(opts, :location_ids))
+      |> maybe_put_filter("customer_ids", Keyword.get(opts, :customer_ids))
+      |> maybe_put_filter("source_names", Keyword.get(opts, :source_names))
+
+    search_page(filter, nil, [])
+  end
+
+  defp maybe_put_filter(filter, _key, nil), do: filter
+  defp maybe_put_filter(filter, _key, []), do: filter
+
+  defp maybe_put_filter(filter, key, values) when is_list(values),
+    do: Map.put(filter, key, values)
+
+  defp search_page(filter, cursor, acc) do
+    body = search_body(filter, cursor)
+
+    "#{api_url()}/subscriptions/search"
+    |> Req.post(
+      Keyword.merge(
+        [json: body, headers: request_headers()],
+        request_options()
+      )
+    )
+    |> handle_search_response(filter, acc)
+  end
+
+  defp search_body(filter, nil), do: %{query: %{filter: filter}}
+  defp search_body(filter, cursor), do: %{query: %{filter: filter}, cursor: cursor}
+
+  defp handle_search_response({:ok, %{status: status, body: body}}, filter, acc)
+       when status in 200..299 do
+    combined = acc ++ Map.get(body, "subscriptions", [])
+
+    case body["cursor"] do
+      cursor when is_binary(cursor) and cursor != "" -> search_page(filter, cursor, combined)
+      _ -> {:ok, combined}
+    end
+  end
+
+  defp handle_search_response({:ok, %{status: status, body: body}}, _filter, _acc) do
+    Logger.error("Square API error (#{status}): #{inspect(body)}")
+    {:error, parse_error(body)}
+  end
+
+  defp handle_search_response({:error, reason}, _filter, _acc) do
+    Logger.error("Square API request failed: #{inspect(reason)}")
+    {:error, :api_unavailable}
+  end
+
+  @doc """
   Delete a scheduled subscription action.
 
   This can be used to cancel a pending CANCEL action, effectively reactivating

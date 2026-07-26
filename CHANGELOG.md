@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-26
+
+### Added
+- `SquareClient.Subscriptions.search/1` — search subscriptions by
+  `:location_ids`, `:customer_ids`, and/or `:source_names`, auto-paginating
+  through every page Square returns. Without webhooks, discovering and
+  reconciling subscriptions requires listing them; no caller previously had
+  a way to do that other than `get/2` by a known id.
+
 ## [0.3.0] - 2026-07-26
 
 Consolidates all changes since 0.1.0 (an interim 0.2.0 version bump in

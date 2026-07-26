@@ -279,6 +279,150 @@ defmodule SquareClient.SubscriptionsTest do
     end
   end
 
+  describe "search/1" do
+    test "sends the given filter and returns the subscriptions list", %{bypass: bypass} do
+      Bypass.expect_once(bypass, "POST", "/v2/subscriptions/search", fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        request = JSON.decode!(body)
+
+        assert request["query"]["filter"]["location_ids"] == ["LOC_123"]
+        refute Map.has_key?(request, "cursor")
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(
+          200,
+          JSON.encode!(%{
+            "subscriptions" => [
+              %{"id" => "SUB_1", "status" => "ACTIVE"},
+              %{"id" => "SUB_2", "status" => "PENDING"}
+            ]
+          })
+        )
+      end)
+
+      assert {:ok, subscriptions} = Subscriptions.search(location_ids: ["LOC_123"])
+      assert length(subscriptions) == 2
+      assert Enum.map(subscriptions, & &1["id"]) == ["SUB_1", "SUB_2"]
+    end
+
+    test "combines multiple filter keys", %{bypass: bypass} do
+      Bypass.expect_once(bypass, "POST", "/v2/subscriptions/search", fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        request = JSON.decode!(body)
+
+        assert request["query"]["filter"]["location_ids"] == ["LOC_123"]
+        assert request["query"]["filter"]["customer_ids"] == ["CUST_1", "CUST_2"]
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, JSON.encode!(%{"subscriptions" => []}))
+      end)
+
+      assert {:ok, []} =
+               Subscriptions.search(location_ids: ["LOC_123"], customer_ids: ["CUST_1", "CUST_2"])
+    end
+
+    test "omits filter keys whose value is nil or an empty list", %{bypass: bypass} do
+      Bypass.expect_once(bypass, "POST", "/v2/subscriptions/search", fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        request = JSON.decode!(body)
+
+        assert request["query"]["filter"] == %{"location_ids" => ["LOC_123"]}
+
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, JSON.encode!(%{"subscriptions" => []}))
+      end)
+
+      assert {:ok, []} =
+               Subscriptions.search(
+                 location_ids: ["LOC_123"],
+                 customer_ids: nil,
+                 source_names: []
+               )
+    end
+
+    test "auto-paginates through a cursor and collects every page", %{bypass: bypass} do
+      {:ok, agent} = Agent.start_link(fn -> 0 end)
+
+      Bypass.expect(bypass, "POST", "/v2/subscriptions/search", fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        request = JSON.decode!(body)
+        call_count = Agent.get_and_update(agent, fn c -> {c, c + 1} end)
+
+        case call_count do
+          0 ->
+            refute Map.has_key?(request, "cursor")
+
+            conn
+            |> Plug.Conn.put_resp_content_type("application/json")
+            |> Plug.Conn.resp(
+              200,
+              JSON.encode!(%{
+                "subscriptions" => [%{"id" => "SUB_PAGE_1"}],
+                "cursor" => "next-page-cursor"
+              })
+            )
+
+          1 ->
+            assert request["cursor"] == "next-page-cursor"
+
+            conn
+            |> Plug.Conn.put_resp_content_type("application/json")
+            |> Plug.Conn.resp(
+              200,
+              JSON.encode!(%{"subscriptions" => [%{"id" => "SUB_PAGE_2"}]})
+            )
+        end
+      end)
+
+      assert {:ok, subscriptions} = Subscriptions.search(location_ids: ["LOC_123"])
+      assert Enum.map(subscriptions, & &1["id"]) == ["SUB_PAGE_1", "SUB_PAGE_2"]
+
+      Agent.stop(agent)
+    end
+
+    test "returns an empty list when Square reports no subscriptions", %{bypass: bypass} do
+      Bypass.expect_once(bypass, "POST", "/v2/subscriptions/search", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(200, JSON.encode!(%{"subscriptions" => []}))
+      end)
+
+      assert {:ok, []} = Subscriptions.search(location_ids: ["LOC_EMPTY"])
+    end
+
+    test "handles a Square API error", %{bypass: bypass} do
+      Bypass.expect_once(bypass, "POST", "/v2/subscriptions/search", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.resp(
+          400,
+          JSON.encode!(%{"errors" => [%{"detail" => "Invalid location id"}]})
+        )
+      end)
+
+      log =
+        capture_log(fn ->
+          assert {:error, "Invalid location id"} = Subscriptions.search(location_ids: ["BAD"])
+        end)
+
+      assert log =~ "Square API error (400)"
+    end
+
+    test "handles API unavailable", %{bypass: bypass} do
+      Bypass.down(bypass)
+
+      log =
+        capture_log(fn ->
+          assert {:error, :api_unavailable} = Subscriptions.search(location_ids: ["LOC_123"])
+        end)
+
+      assert log =~ "Square API request failed"
+    end
+  end
+
   describe "get/1" do
     test "retrieves subscription successfully", %{bypass: bypass} do
       subscription_id = "SUB_GET_123"
