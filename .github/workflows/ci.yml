@@ -82,5 +82,17 @@ jobs:
 
       # Gate 4: Dialyzer verifies specs are actually correct (Credo only
       # checks they exist). Slow but catches real bugs.
+      #
+      # Default formatter on purpose — do NOT add --format github. OTP 28's
+      # exact_compare and opaque_compare warning types are unregistered in
+      # dialyxir 1.4.7 (still the latest release), so the github and short
+      # formatters throw `{:error, :unknown_warning, <type>}` out of
+      # Dialyxir.Formatter.Utils.warning/1 and abort the job before it
+      # reports anything. The default formatter catches that throw and
+      # falls back to dialyzer's legacy warning text: the finding is still
+      # printed and the job still exits non-zero. Full mechanism — and why
+      # these two types also cannot be silenced from .dialyzer_ignore.exs —
+      # is in the fleet practices' mix_snippets.exs. Revisit when a
+      # dialyxir release registers them.
       - name: Dialyzer
-        run: mix dialyzer --format github
+        run: mix dialyzer
